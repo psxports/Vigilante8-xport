@@ -10,6 +10,9 @@ uint32 sub_80016E64(uint32 matrix);
 uint32 xport_guest_buffer_address(void *host_buffer, size_t bytes);
 uint32 sub_8001DB54(uint32 position, uint32 bound);
 uint32 sub_8001BE5C(uint32 model, uint32 matrix, uint32 ordering_table);
+uint32 v8_native_1BE5C(uint32 model, const MATRIX *matrix, uint32 ordering_table);
+void v8_native_16E64(MATRIX *input);
+void v8_native_1DCC8(uint32 object, const MATRIX *parent_matrix);
 uint32 sub_8001DCC8(uint32 model, uint32 matrix);
 uint32 sub_8003E2FC(uint32 object);
 uint32 sub_8003E520(uint32 object);
@@ -29,7 +32,7 @@ uint32 sub_80016A20(uint32 vector);
 uint32 sub_800116F4(uint32 bytes);
 uint32 sub_8001B36C(uint32 object, uint32 index, uint32 incoming_s1);
 uint32 sub_80018124(uint32 width, uint32 height, uint32 horizontal_alignment, uint32 vertical_alignment, uint32 requested_width, uint32 requested_height);
-uint32 SetDrawMove(uint32 destination, uint32 rectangle, uint32 x, uint32 y);
+uint32 SetDrawMovePSX(uint32 destination, uint32 rectangle, uint32 x, uint32 y);
 uint32 ClearOTagPSX(uint32 ot, uint32 count, uint32 header_address, uint32 header_target, uint32 debug_flag_address, uint32 debug_callback_slot, uint32 debug_format_address);
 uint32 sub_8001A584(uint32 object);
 uint32 sub_8001A4AC(uint32 object, uint32 incoming_v0);
@@ -715,53 +718,52 @@ uint32 sub_8001DC1C(uint32 node)
     return maximum;
 }
 
-uint32 sub_8001A2CC(uint32 rectangle, uint32 first, uint32 second, uint32 color)
+uint32 v8_native_1A2CC(const PSX_RECT *rectangle, uint32 first, uint32 second, uint32 color)
 {
     DRAWENV environment;
     uint32 node, value, width, height, child, x, y, allocated;
-    FUNCTION_MARKER(0x8001A2CCu, "SLUS_005.10");
     node = sub_800116F4(136u);
-    value = (uint32)(sint32)(sint16)r_u16(rectangle);
+    value = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
     w_u32(node, value);
-    value = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
+    value = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
     w_u32(node + 8u, first);
     w_u32(node + 12u, second);
     w_u32(node + 4u, value);
-    width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
-    height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+    width = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
+    height = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
     allocated = sub_80018124(width, height, 64u, 1u, 64u, 1u);
     w_u32(node + 20u, allocated);
     (void)ClearOTagPSX(node + 72u, 1u, 0x800650E4u, 0x800650D0u, 0x80065026u, 0x80065020u, 0x800112B0u);
     child = r_u32(node + 20u);
-    width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+    width = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
     x = (uint32)(sint32)(sint16)r_u16(child);
     y = (uint32)(sint32)(sint16)r_u16(child + 2u);
-    height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+    height = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
     SetDefDrawEnv(&environment, (sint32)x, (sint32)y, (sint32)width, (sint32)height);
     xport_store_u8((uint8 *)&environment + 23u, 1u);
     if ((sint32)color < 0)
     {
-        width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
-        height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+        width = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
+        height = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
         allocated = sub_80018124(width, height, 1u, 1u, 1u, 1u);
         w_u32(node + 16u, allocated);
         SetDrawEnv(psx_addr(node + 72u, 64u), &environment);
         child = r_u32(node + 20u);
-        x = (uint32)(sint32)(sint16)r_u16(rectangle);
-        y = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
-        (void)SetDrawMove(node + 24u, child, x, y);
+        x = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
+        y = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
+        (void)SetDrawMovePSX(node + 24u, child, x, y);
         child = r_u32(node + 20u);
         allocated = r_u32(node + 16u);
         x = (uint32)(sint32)(sint16)r_u16(child);
         y = (uint32)(sint32)(sint16)r_u16(child + 2u);
-        (void)SetDrawMove(node + 48u, allocated, x, y);
+        (void)SetDrawMovePSX(node + 48u, allocated, x, y);
         (void)MargePrim(node + 24u, node + 48u);
         value = r_u32(node + 24u);
         child = r_u32(node + 16u);
         w_u32(node + 24u, (value & 0xFF000000u) | ((node + 72u) & 0xFFFFFFu));
         x = (uint32)(sint32)(sint16)r_u16(child);
         y = (uint32)(sint32)(sint16)r_u16(child + 2u);
-        MoveImage((PSX_RECT *)psx_addr(rectangle, 8u), (sint32)x, (sint32)y);
+        MoveImage((PSX_RECT *)rectangle, (sint32)x, (sint32)y);
         return node;
     }
     w_u32(node + 16u, 0u);
@@ -771,12 +773,18 @@ uint32 sub_8001A2CC(uint32 rectangle, uint32 first, uint32 second, uint32 color)
     xport_store_u8((uint8 *)&environment + 27u, (uint8)(color >> 16));
     SetDrawEnv(psx_addr(node + 72u, 64u), &environment);
     child = r_u32(node + 20u);
-    x = (uint32)(sint32)(sint16)r_u16(rectangle);
-    y = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
-    (void)SetDrawMove(node + 24u, child, x, y);
+    x = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
+    y = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
+    (void)SetDrawMovePSX(node + 24u, child, x, y);
     value = r_u32(node + 24u);
     w_u32(node + 24u, (value & 0xFF000000u) | ((node + 72u) & 0xFFFFFFu));
     return node;
+}
+
+uint32 sub_8001A2CC(uint32 rectangle, uint32 first, uint32 second, uint32 color)
+{
+    FUNCTION_MARKER(0x8001A2CCu, "SLUS_005.10");
+    return v8_native_1A2CC((const PSX_RECT *)psx_addr(rectangle, sizeof(PSX_RECT)), first, second, color);
 }
 
 uint32 sub_80011A10(void)
@@ -794,7 +802,7 @@ uint32 sub_800119C0(uint32 index)
     table = 0x800664A0u + (((index << 4) + index) << 10);
     w_u32(0x80065308u, index);
     w_u32(0x80065910u, table);
-    (void)ClearOTagRPSX((uint32 *)psx_addr(table, 16384u), 4096, 0x800650E4u, 0x800650D0u, table);
+    (void)ClearOTagRNativePSX((uint32 *)psx_addr(table, 16384u), 4096, 0x800650E4u, 0x800650D0u);
     return sub_80011914(index);
 }
 
@@ -842,6 +850,29 @@ uint32 sub_8001A4F8(uint32 object, uint32 alternate)
     y = r_u32(object + 12u);
     sub_8004D524(x, y);
     return result;
+}
+
+void v8_native_1A4F8(uint32 object, uint32 alternate)
+{
+    uint32 present, selected, x, y;
+    present = r_u32(object + 16u);
+    if (present != 0u)
+    {
+        if (alternate != 0u)
+            w_u32(object + 48u, 0u);
+        else
+            w_u32(object + 48u, ((object + 72u) & 0xFFFFFFu) | 0x05000000u);
+    }
+    selected = object + 24u;
+    if (alternate == 0u)
+    {
+        present = r_u32(object + 16u);
+        selected = present != 0u ? object + 48u : object + 72u;
+    }
+    DrawOTag((uint32 *)psx_addr(selected, 4u));
+    x = r_u32(object + 8u);
+    y = r_u32(object + 12u);
+    sub_8004D524(x, y);
 }
 
 uint32 sub_8001DE08(uint32 object)
@@ -1003,6 +1034,164 @@ frame_release:
     return result;
 }
 
+uint32 v8_native_1DE08(uint32 object)
+{
+    MATRIX composed, alternate_matrix;
+    uint8 *primary_bytes = (uint8 *)&composed;
+    uint8 *alternate_bytes = (uint8 *)&alternate_matrix;
+    MATRIX *selected;
+    uint32 flags, result, model;
+    uint32 first, second, third, fourth, x, y, page, brightness, limit;
+    result = r_u32(object) & 2u;
+    if (result != 0u)
+        return result;
+    model = r_u32(object + 84u);
+    result = sub_8001DB54(object + 36u, model);
+    if (result == 0u)
+        return result;
+    selected = &composed;
+    (void)CompMatrixLV((MATRIX *)psx_addr(0x8006F680u, 32u), (MATRIX *)psx_addr(object + 16u, 32u), &composed);
+    first = xport_load_le32(primary_bytes + 28u);
+    if ((sint32)first > 0x3FFFFF)
+    {
+        result = 1u;
+        goto finish;
+    }
+    flags = r_u32(object);
+    if ((flags & 0x10u) != 0u)
+    {
+        if ((flags & 0x400u) != 0u)
+        {
+            first = r_u32(object + 16u);
+            second = r_u32(object + 20u);
+            third = r_u32(object + 24u);
+            fourth = r_u32(object + 28u);
+            xport_store_le32(alternate_bytes + 0u, first);
+            xport_store_le32(alternate_bytes + 4u, second);
+            xport_store_le32(alternate_bytes + 8u, third);
+            xport_store_le32(alternate_bytes + 12u, fourth);
+            first = r_u16(object + 32u);
+            xport_store_le16(alternate_bytes + 16u, (uint16)first);
+            first = xport_load_le32(primary_bytes + 20u);
+            second = xport_load_le32(primary_bytes + 24u);
+            third = xport_load_le32(primary_bytes + 28u);
+            xport_store_le32(alternate_bytes + 20u, first);
+            xport_store_le32(alternate_bytes + 24u, second);
+            xport_store_le32(alternate_bytes + 28u, third);
+            selected = &alternate_matrix;
+        }
+        else
+        {
+            first = r_u16(object + 34u);
+            if (first != 0u)
+                (void)v8_native_16E64(&composed);
+            else
+            {
+                first = r_u32(0x8006F660u + 0u);
+                second = r_u32(0x8006F660u + 4u);
+                third = r_u32(0x8006F660u + 8u);
+                xport_store_le32(primary_bytes + 0u, first);
+                xport_store_le32(primary_bytes + 4u, second);
+                xport_store_le32(primary_bytes + 8u, third);
+                first = r_u32(0x8006F660u + 12u);
+                second = r_u16(0x8006F660u + 16u);
+                xport_store_le32(primary_bytes + 12u, first);
+                xport_store_le16(primary_bytes + 16u, (uint16)second);
+            }
+        }
+    }
+    flags = r_u32(object);
+    brightness = 64u;
+    if ((flags & 0x2000u) != 0u)
+    {
+        x = r_u32(object + 72u);
+        if ((sint32)x < 0)
+            x += 0xFFFFu;
+        y = r_u32(object + 80u);
+        x = (uint32)((sint32)x >> 16);
+        if ((sint32)y < 0)
+            y += 0xFFFFu;
+        y = (uint32)((sint32)y >> 16);
+        page = r_u32(0x800911A0u + ((y >> 6) << 2) + ((x >> 6) << 7));
+        first = r_u16(page + ((y & 63u) << 1) + ((x & 63u) << 7));
+        brightness = (first & 0xF800u) >> 8;
+    }
+    SetBackColor((sint32)brightness, (sint32)brightness, (sint32)brightness);
+    limit = r_u32(object + 108u);
+    if (limit != 0u)
+        first = xport_load_le32(primary_bytes + 28u);
+    if (limit != 0u && (sint32)limit < (sint32)first)
+    {
+        model = r_u32(object + 104u);
+        if (model != 0u)
+        {
+            flags = r_u32(object);
+            if ((flags & 0x1010u) == 0x1000u)
+            {
+                if ((flags & 0x400u) != 0u)
+                {
+                    first = r_u32(0x800568B4u + 0u);
+                    second = r_u32(0x800568B4u + 4u);
+                    third = r_u32(0x800568B4u + 8u);
+                    xport_store_le32(primary_bytes + 0u, first);
+                    xport_store_le32(primary_bytes + 4u, second);
+                    xport_store_le32(primary_bytes + 8u, third);
+                    first = r_u32(0x800568B4u + 12u);
+                    second = r_u16(0x800568B4u + 16u);
+                    xport_store_le32(primary_bytes + 12u, first);
+                    xport_store_le16(primary_bytes + 16u, (uint16)second);
+                }
+                else
+                {
+                    first = r_u16(object + 34u);
+                    if (first != 0u)
+                        (void)v8_native_16E64(&composed);
+                    else
+                    {
+                        first = r_u32(0x8006F660u + 0u);
+                        second = r_u32(0x8006F660u + 4u);
+                        third = r_u32(0x8006F660u + 8u);
+                        xport_store_le32(primary_bytes + 0u, first);
+                        xport_store_le32(primary_bytes + 4u, second);
+                        xport_store_le32(primary_bytes + 8u, third);
+                        first = r_u32(0x8006F660u + 12u);
+                        second = r_u16(0x8006F660u + 16u);
+                        xport_store_le32(primary_bytes + 12u, first);
+                        xport_store_le16(primary_bytes + 16u, (uint16)second);
+                    }
+                }
+            }
+            model = r_u32(object + 104u);
+            page = r_u32(0x80065910u);
+            v8_native_1BE5C(model, selected, page);
+        }
+    }
+    else
+    {
+        model = r_u32(object + 48u);
+        if (model != 0u)
+        {
+            page = r_u32(0x80065910u);
+            v8_native_1BE5C(model, selected, page);
+        }
+        model = r_u32(object + 56u);
+        if (model != 0u)
+            (void)v8_native_1DCC8(model, &composed);
+    }
+    flags = r_u32(object);
+    result = flags & 0x200u;
+    if ((flags & 8u) != 0u)
+    {
+        if (result == 0u)
+            (void)sub_8003E2FC(object);
+        model = r_u32(object + 112u);
+        result = sub_8003E520(model);
+        goto finish;
+    }
+finish:
+    return result;
+}
+
 uint32 sub_8001DB54(uint32 position, uint32 bound)
 {
     uint32 first, second, third, x, y, z, tx, ty, tz, value;
@@ -1037,14 +1226,15 @@ uint32 sub_8001DB54(uint32 position, uint32 bound)
     return (sint32)value < limit;
 }
 
-uint32 sub_8001BE5C(uint32 model, uint32 matrix, uint32 ordering_table)
+static uint32 v8_renderer_1BE5C(uint32 model, const MATRIX *matrix, uint32 ordering_table, const uint32 *guest_matrix_carrier, uint32 *host_ordering)
 {
 uint32 r[32], known = 0x10000071u, lo, x, y, value, target;
+uint32 matrix_carrier_live = 1u;
 sint32 branch;
 PsxGteSnapshot snapshot;
-SVECTOR vectors[3]; uint32 colors[3]; sint32 screen[3], depths[3], flags;
+SVECTOR vectors[3]; uint32 colors[3];
 FUNCTION_MARKER(0x8001BE5Cu, "SLUS_005.10");
-r[0] = 0u; r[4] = model; r[5] = matrix; r[6] = ordering_table; r[28] = 0x80065304u; r[16] = r[4] + r[0]; known = (known & ~0x00010000u) | ((known & 0x00000011u) == 0x00000011u ? 0x00010000u : 0u);
+r[0] = 0u; r[4] = model; if (guest_matrix_carrier != NULL) r[5] = *guest_matrix_carrier; r[6] = ordering_table; r[28] = 0x80065304u; r[16] = r[4] + r[0]; known = (known & ~0x00010000u) | ((known & 0x00000011u) == 0x00000011u ? 0x00010000u : 0u);
 r[25] = r_u16((r[16] + 0x00000000u)); known = (known & ~0x02000000u) | ((known & 0x00010000u) == 0x00010000u ? 0x02000000u : 0u); r[1] = r[25] & 0x0001u; known = (known & ~0x00000002u) | ((known & 0x02000000u) == 0x02000000u ? 0x00000002u : 0u);
 branch = (r[1] == r[0]); if (branch) goto L_8001BF84;
 r[24] = 0x80070000u; known = (known & ~0x01000000u) | ((known & 0x00000000u) == 0x00000000u ? 0x01000000u : 0u); r[24] = r[24] + 0xFFFFF700u; known = (known & ~0x01000000u) | ((known & 0x01000000u) == 0x01000000u ? 0x01000000u : 0u);
@@ -1053,16 +1243,16 @@ r[10] = r_u32((r[24] + 0x00000008u)); known = (known & ~0x00000400u) | ((known &
 r[12] = r_u32((r[24] + 0x00000010u)); known = (known & ~0x00001000u) | ((known & 0x01000000u) == 0x01000000u ? 0x00001000u : 0u); xport_gte_write_control(0u, r[8]);
 xport_gte_write_control(1u, r[9]); xport_gte_write_control(2u, r[10]);
 xport_gte_write_control(3u, r[11]); xport_gte_write_control(4u, r[12]);
-r[8] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000000u)); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u); r[9] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000006u)); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u);
-r[10] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x0000000Cu)); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u); xport_gte_write_data(9u, r[8]);
+r[8] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000000u); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u); r[9] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000006u); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u);
+r[10] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x0000000Cu); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u); xport_gte_write_data(9u, r[8]);
 xport_gte_write_data(10u, r[9]); xport_gte_write_data(11u, r[10]);
-xport_gte_mvmva(0x49E012u); r[11] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000002u)); known = (known & ~0x00000800u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000800u : 0u);
-r[12] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000008u)); known = (known & ~0x00001000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00001000u : 0u); r[13] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x0000000Eu)); known = (known & ~0x00002000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00002000u : 0u);
+xport_gte_mvmva(0x49E012u); r[11] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000002u); known = (known & ~0x00000800u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000800u : 0u);
+r[12] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000008u); known = (known & ~0x00001000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00001000u : 0u); r[13] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x0000000Eu); known = (known & ~0x00002000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00002000u : 0u);
 r[8] = xport_gte_read_data(9u); known = (known & ~0x00000100u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000100u : 0u); r[9] = xport_gte_read_data(10u); known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 r[10] = xport_gte_read_data(11u); known = (known & ~0x00000400u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000400u : 0u); xport_gte_write_data(9u, r[11]);
 xport_gte_write_data(10u, r[12]); xport_gte_write_data(11u, r[13]);
-xport_gte_mvmva(0x49E012u); r[14] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000004u)); known = (known & ~0x00004000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00004000u : 0u);
-r[15] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x0000000Au)); known = (known & ~0x00008000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00008000u : 0u); r[24] = (uint32)(sint32)(sint16)r_u16((r[5] + 0x00000010u)); known = (known & ~0x01000000u) | ((known & 0x00000020u) == 0x00000020u ? 0x01000000u : 0u);
+xport_gte_mvmva(0x49E012u); r[14] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000004u); known = (known & ~0x00004000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00004000u : 0u);
+r[15] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x0000000Au); known = (known & ~0x00008000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00008000u : 0u); r[24] = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)matrix + 0x00000010u); known = (known & ~0x01000000u) | ((known & 0x00000020u) == 0x00000020u ? 0x01000000u : 0u);
 r[11] = xport_gte_read_data(9u); known = (known & ~0x00000800u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000800u : 0u); r[12] = xport_gte_read_data(10u); known = (known & ~0x00001000u) | ((known & 0x00000000u) == 0x00000000u ? 0x00001000u : 0u);
 r[13] = xport_gte_read_data(11u); known = (known & ~0x00002000u) | ((known & 0x00000000u) == 0x00000000u ? 0x00002000u : 0u); xport_gte_write_data(9u, r[14]);
 xport_gte_write_data(10u, r[15]); xport_gte_write_data(11u, r[24]);
@@ -1077,9 +1267,9 @@ r[9] = value; known = (known & ~0x00000200u) | ((known & 0x00004200u) == 0x00004
 r[15] = (r[15] << 16u); known = (known & ~0x00008000u) | ((known & 0x00008000u) == 0x00008000u ? 0x00008000u : 0u); x = r[12]; y = r[15]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001BF78u);
 r[12] = value; known = (known & ~0x00001000u) | ((known & 0x00009000u) == 0x00009000u ? 0x00001000u : 0u); psx_gte_snapshot(&snapshot); snapshot.light.m[1][1] = (sint16)r[12]; snapshot.light.m[1][2] = (sint16)(r[12] >> 16u); SetLightMatrix(&snapshot.light);
 psx_gte_snapshot(&snapshot); snapshot.light.m[2][2] = (sint16)r[24]; SetLightMatrix(&snapshot.light); L_8001BF84:;
-r[8] = r_u32((r[5] + 0x00000000u)); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u); r[9] = r_u32((r[5] + 0x00000004u)); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u);
-r[10] = r_u32((r[5] + 0x00000008u)); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u); r[11] = r_u32((r[5] + 0x0000000Cu)); known = (known & ~0x00000800u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000800u : 0u);
-r[12] = r_u32((r[5] + 0x00000010u)); known = (known & ~0x00001000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00001000u : 0u); xport_gte_write_control(0u, r[8]);
+r[8] = xport_load_le32((const uint8 *)matrix + 0x00000000u); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u); r[9] = xport_load_le32((const uint8 *)matrix + 0x00000004u); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u);
+r[10] = xport_load_le32((const uint8 *)matrix + 0x00000008u); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u); r[11] = xport_load_le32((const uint8 *)matrix + 0x0000000Cu); known = (known & ~0x00000800u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000800u : 0u);
+r[12] = xport_load_le32((const uint8 *)matrix + 0x00000010u); known = (known & ~0x00001000u) | ((known & 0x00000020u) == 0x00000020u ? 0x00001000u : 0u); xport_gte_write_control(0u, r[8]);
 xport_gte_write_control(1u, r[9]); xport_gte_write_control(2u, r[10]);
 xport_gte_write_control(3u, r[11]); xport_gte_write_control(4u, r[12]);
 r[20] = (uint32)(sint32)(sint16)r_u16((r[16] + 0x00000026u)); known = (known & ~0x00100000u) | ((known & 0x00010000u) == 0x00010000u ? 0x00100000u : 0u); r[11] = r[0] + 0x00000010u; known = (known & ~0x00000800u) | ((known & 0x00000001u) == 0x00000001u ? 0x00000800u : 0u);
@@ -1087,8 +1277,8 @@ x = r[11]; y = r[20]; value = x - y; if (((x ^ y) & (x ^ value) & 0x80000000u) !
 r[1] = r[25] & 0x0002u; known = (known & ~0x00000002u) | ((known & 0x02000000u) == 0x02000000u ? 0x00000002u : 0u); branch = (r[1] == r[0]);
 x = r[20]; y = 0xFFFFFFF9u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001BFC0u); r[20] = value; known = (known & ~0x00100000u) | ((known & 0x00100000u) == 0x00100000u ? 0x00100000u : 0u);
 if (branch) goto L_8001BFC8; r[20] = r[0] + 0x00000010u; known = (known & ~0x00100000u) | ((known & 0x00000001u) == 0x00000001u ? 0x00100000u : 0u);
-L_8001BFC8:; r[8] = r_u32((r[5] + 0x00000014u)); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u);
-r[9] = r_u32((r[5] + 0x00000018u)); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u); r[10] = r_u32((r[5] + 0x0000001Cu)); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u);
+L_8001BFC8:; r[8] = xport_load_le32((const uint8 *)matrix + 0x00000014u); known = (known & ~0x00000100u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000100u : 0u);
+r[9] = xport_load_le32((const uint8 *)matrix + 0x00000018u); known = (known & ~0x00000200u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000200u : 0u); r[10] = xport_load_le32((const uint8 *)matrix + 0x0000001Cu); known = (known & ~0x00000400u) | ((known & 0x00000020u) == 0x00000020u ? 0x00000400u : 0u);
 r[8] = ((sint32)r[8] >> (r[11] & 31u)); known = (known & ~0x00000100u) | ((known & 0x00000900u) == 0x00000900u ? 0x00000100u : 0u); r[9] = ((sint32)r[9] >> (r[11] & 31u)); known = (known & ~0x00000200u) | ((known & 0x00000A00u) == 0x00000A00u ? 0x00000200u : 0u);
 r[10] = ((sint32)r[10] >> (r[11] & 31u)); known = (known & ~0x00000400u) | ((known & 0x00000C00u) == 0x00000C00u ? 0x00000400u : 0u); xport_gte_write_control(5u, r[8]);
 xport_gte_write_control(6u, r[9]); xport_gte_write_control(7u, r[10]);
@@ -1110,7 +1300,7 @@ r[6] = r[19] + r[0]; known = (known & ~0x00000040u) | ((known & 0x00080001u) == 
 x = r[16]; y = r[8]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C04Cu); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00010100u) == 0x00010100u ? 0x00040000u : 0u);
 w_u32((r[18] + 0x0000001Cu), r[4]); r[8] = r[8] ^ 0x0004u; known = (known & ~0x00000100u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000100u : 0u);
 x = r[16]; y = r[8]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C058u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00010100u) == 0x00010100u ? 0x00040000u : 0u);
-r[5] = r_u32((r[18] + 0x0000001Cu)); known = (known & ~0x00000020u) | ((known & 0x00040000u) == 0x00040000u ? 0x00000020u : 0u); r[31] = 0x8001C068u; known |= 0x80000000u;
+matrix_carrier_live = 0u; r[5] = r_u32((r[18] + 0x0000001Cu)); known = (known & ~0x00000020u) | ((known & 0x00040000u) == 0x00040000u ? 0x00000020u : 0u); r[31] = 0x8001C068u; known |= 0x80000000u;
 r[18] = r[4] + r[0]; known = (known & ~0x00040000u) | ((known & 0x00000011u) == 0x00000011u ? 0x00040000u : 0u); r[2] = sub_80044C44(r[4], r[5], r[6]); known = (known & 0xD0FF0001u) | 4u;
 L_8001C068:; r[19] = r_u32((r[16] + 0x00000018u)); known = (known & ~0x00080000u) | ((known & 0x00010000u) == 0x00010000u ? 0x00080000u : 0u);
 r[21] = r_u32((r[16] + 0x00000014u)); known = (known & ~0x00200000u) | ((known & 0x00010000u) == 0x00010000u ? 0x00200000u : 0u); L_8001C070:;
@@ -1125,7 +1315,7 @@ xport_gte_write_data(0u, r_u32((r[9] + 0x00000000u))); xport_gte_write_data(1u, 
 xport_gte_write_data(2u, r_u32((r[10] + 0x00000000u))); xport_gte_write_data(3u, r_u32((r[10] + 0x00000004u)));
 xport_gte_write_data(4u, r_u32((r[11] + 0x00000000u))); xport_gte_write_data(5u, r_u32((r[11] + 0x00000004u)));
 r[8] = r_u32((r[19] + 0x00000000u)); known = (known & ~0x00000100u) | ((known & 0x00080000u) == 0x00080000u ? 0x00000100u : 0u); x = r[21]; y = 0xFFFFFFFFu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C0BCu);
-r[21] = value; known = (known & ~0x00200000u) | ((known & 0x00200000u) == 0x00200000u ? 0x00200000u : 0u); psx_gte_snapshot(&snapshot); vectors[0].vx = snapshot.v0[0]; vectors[0].vy = snapshot.v0[1]; vectors[0].vz = snapshot.v0[2]; vectors[1].vx = snapshot.v1[0]; vectors[1].vy = snapshot.v1[1]; vectors[1].vz = snapshot.v1[2]; vectors[2].vx = snapshot.v2[0]; vectors[2].vy = snapshot.v2[1]; vectors[2].vz = snapshot.v2[2]; gte_project3_full_depth(vectors, screen, depths, &flags); xport_gte_complete_rtpt();
+r[21] = value; known = (known & ~0x00200000u) | ((known & 0x00200000u) == 0x00200000u ? 0x00200000u : 0u); xport_gte_execute(0x280030u);
 r[1] = (r[8] >> 24u); known = (known & ~0x00000002u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000002u : 0u); r[1] = r[1] & 0x003Cu; known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
 x = r[1]; y = r[22]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C0CCu); r[1] = value; known = (known & ~0x00000002u) | ((known & 0x00400002u) == 0x00400002u ? 0x00000002u : 0u);
 r[1] = r_u32((r[1] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); r[6] = r[18] + r[0]; known = (known & ~0x00000040u) | ((known & 0x00040001u) == 0x00040001u ? 0x00000040u : 0u);
@@ -1140,18 +1330,18 @@ case 0x8001C4B4u: goto L_8001C4B4; case 0x8001C560u: goto L_8001C560;
 case 0x8001C5ACu: goto L_8001C5AC; case 0x8001C630u: goto L_8001C630;
 case 0x8001C71Cu: goto L_8001C71C; case 0x8001CB8Cu: goto L_8001CB8C;
 case 0x8001CBD8u: goto L_8001CBD8; case 0x8001CD38u: goto L_8001CD38;
-default: return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C0D8u, target, known, r); }
+default: return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C0D8u, target, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); }
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C0E4u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x0000000Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C0ECu);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C0E8u, 0x8001CE24u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C0E8u, 0x8001CE24u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x0000000Cu), (uint32)snapshot.sxy[1]);
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000010u), (uint32)snapshot.sxy[2]); goto L_8001CC64;
 L_8001C100:; psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); x = r[18]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C104u);
 r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u); branch = ((sint32)r[9] < 0);
 x = r[19]; y = 0x0000000Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C10Cu); r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u);
-if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C108u, 0x8001CE10u, known, r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
+if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C108u, 0x8001CE10u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 branch = ((sint32)r[9] <= 0); if (branch) goto L_8001C078;
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x0000000Cu), (uint32)snapshot.sxy[1]);
@@ -1160,7 +1350,7 @@ L_8001C134:; psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); x = r[18]; y = 0x00000028u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C138u);
 r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u); branch = ((sint32)r[9] < 0);
 x = r[19]; y = 0x0000001Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C140u); r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u);
-if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C13Cu, 0x8001D230u, known, r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
+if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C13Cu, 0x8001D230u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 branch = ((sint32)r[9] <= 0); if (branch) goto L_8001C078;
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000014u), (uint32)snapshot.sxy[1]);
@@ -1169,7 +1359,7 @@ L_8001C168:; psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); x = r[18]; y = 0x0000001Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C16Cu);
 r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u); branch = ((sint32)r[9] < 0);
 x = r[19]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C174u); r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u);
-if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C170u, 0x8001CF68u, known, r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
+if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C170u, 0x8001CF68u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]);
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 branch = ((sint32)r[9] <= 0); if (branch) goto L_8001C078;
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000010u), (uint32)snapshot.sxy[1]);
@@ -1199,7 +1389,7 @@ goto L_8001CC64; L_8001C22C:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C230u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x0000000Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C238u);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C234u, 0x8001CDE0u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C234u, 0x8001CDE0u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); r[10] = 0x10000000u; known = (known & ~0x00000400u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000400u : 0u);
 branch = ((sint32)r[9] <= 0); x = r[8]; y = r[10]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C24Cu);
@@ -1213,7 +1403,7 @@ goto L_8001CC64; L_8001C280:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000020u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C284u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C28Cu);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C288u, 0x8001D080u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C288u, 0x8001D080u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); r[10] = 0x10000000u; known = (known & ~0x00000400u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000400u : 0u);
 branch = ((sint32)r[9] <= 0); x = r[8]; y = r[10]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C2A0u);
@@ -1261,7 +1451,7 @@ goto L_8001CC64; L_8001C3A0:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x0000001Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C3A4u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000010u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C3ACu);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C3A8u, 0x8001CF68u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C3A8u, 0x8001CF68u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); branch = ((sint32)r[9] <= 0);
 if (branch) goto L_8001C078; psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]);
@@ -1270,7 +1460,7 @@ goto L_8001CC64; L_8001C3D4:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x0000001Cu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C3D8u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000010u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C3E0u);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C3DCu, 0x8001CF14u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C3DCu, 0x8001CF14u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); r[10] = 0x10000000u; known = (known & ~0x00000400u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000400u : 0u);
 branch = ((sint32)r[9] <= 0); x = r[8]; y = r[10]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C3F4u);
@@ -1298,7 +1488,7 @@ goto L_8001C078; L_8001C480:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000028u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C484u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000018u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C48Cu);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C488u, 0x8001D230u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C488u, 0x8001D230u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); branch = ((sint32)r[9] <= 0);
 if (branch) goto L_8001C078; psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]);
@@ -1307,7 +1497,7 @@ goto L_8001CC64; L_8001C4B4:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000028u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C4B8u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000018u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C4C0u);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C4BCu, 0x8001D1DCu, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001C4BCu, 0x8001D1DCu, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); r[10] = 0x10000000u; known = (known & ~0x00000400u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000400u : 0u);
 branch = ((sint32)r[9] <= 0); x = r[8]; y = r[10]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C4D4u);
@@ -1345,7 +1535,7 @@ r[4] = (uint32)snapshot.sxy[0]; known = (known & ~0x00000010u) | ((known & 0x000
 r[8] = (r[8] >> (r[20] & 31u)); known = (known & ~0x00000100u) | ((known & 0x00100100u) == 0x00100100u ? 0x00000100u : 0u); x = r[8]; y = 0xFFFFFFF8u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C594u);
 r[8] = value; known = (known & ~0x00000100u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000100u : 0u); r[8] = (r[8] << 2u); known = (known & ~0x00000100u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000100u : 0u);
 r[31] = 0x8001C5A4u; known |= 0x80000000u; x = r[17]; y = r[8]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C5A0u);
-r[5] = value; known = (known & ~0x00000020u) | ((known & 0x00020100u) == 0x00020100u ? 0x00000020u : 0u); r[2] = sub_8002A1E8(r[4], r[5], r[6], r[7], r[9]); known = (known & 0xD0FF0001u) | 4u;
+matrix_carrier_live = 0u; r[5] = value; known = (known & ~0x00000020u) | ((known & 0x00020100u) == 0x00020100u ? 0x00000020u : 0u); r[2] = sub_8002A1E8(r[4], r[5], r[6], r[7], r[9]); known = (known & 0xD0FF0001u) | 4u;
 branch = ((sint32)r[0] >= 0); if (branch) goto L_8001C070;
 L_8001C5AC:; psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); x = r[18]; y = 0x00000028u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001C5B0u);
@@ -1572,13 +1762,13 @@ goto L_8001CC64; psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); x = r[18]; y = 0x00000020u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CB70u);
 r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u); branch = ((sint32)r[9] < 0);
 x = r[19]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CB78u); r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u);
-if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CB74u, 0x8001D0C4u, known, r); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]);
+if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CB74u, 0x8001D0C4u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]);
 psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000010u), (uint32)snapshot.sxy[1]); psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000018u), (uint32)snapshot.sxy[2]);
 goto L_8001CC64; L_8001CB8C:;
 psx_gte_snapshot(&snapshot); r[9] = (uint32)snapshot.flag; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u);
 x = r[18]; y = 0x00000020u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CB90u); r[18] = value; known = (known & ~0x00040000u) | ((known & 0x00040000u) == 0x00040000u ? 0x00040000u : 0u);
 branch = ((sint32)r[9] < 0); x = r[19]; y = 0x00000014u; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CB98u);
-r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CB94u, 0x8001D0B0u, known, r);
+r[19] = value; known = (known & ~0x00080000u) | ((known & 0x00080000u) == 0x00080000u ? 0x00080000u : 0u); if (branch) return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CB94u, 0x8001D0B0u, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r);
 psx_gte_snapshot(&snapshot); (void)NormalClip(snapshot.sxy[0], snapshot.sxy[1], snapshot.sxy[2]); psx_gte_snapshot(&snapshot);
 r[9] = (uint32)snapshot.mac0; known = (known & ~0x00000200u) | ((known & 0x00000000u) == 0x00000000u ? 0x00000200u : 0u); branch = ((sint32)r[9] <= 0);
 if (branch) goto L_8001C078; psx_gte_snapshot(&snapshot); w_u32((r[6] + 0x00000008u), (uint32)snapshot.sxy[0]);
@@ -1624,11 +1814,11 @@ xport_gte_write_data(1u, r_u32((r[9] + 0x00000004u))); xport_gte_write_data(2u, 
 xport_gte_write_data(3u, r_u32((r[10] + 0x00000004u))); xport_gte_write_data(4u, r_u32((r[11] + 0x00000000u)));
 xport_gte_write_data(5u, r_u32((r[11] + 0x00000004u))); r[8] = r_u32((r[19] + 0x00000000u)); known = (known & ~0x00000100u) | ((known & 0x00080000u) == 0x00080000u ? 0x00000100u : 0u);
 x = r[21]; y = 0xFFFFFFFFu; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CCC4u); r[21] = value; known = (known & ~0x00200000u) | ((known & 0x00200000u) == 0x00200000u ? 0x00200000u : 0u);
-psx_gte_snapshot(&snapshot); vectors[0].vx = snapshot.v0[0]; vectors[0].vy = snapshot.v0[1]; vectors[0].vz = snapshot.v0[2]; vectors[1].vx = snapshot.v1[0]; vectors[1].vy = snapshot.v1[1]; vectors[1].vz = snapshot.v1[2]; vectors[2].vx = snapshot.v2[0]; vectors[2].vy = snapshot.v2[1]; vectors[2].vz = snapshot.v2[2]; gte_project3_full_depth(vectors, screen, depths, &flags); xport_gte_complete_rtpt(); r[1] = r_u32((r[6] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u);
-r[9] = r_u32((r[7] + 0x00000000u)); known = (known & ~0x00000200u) | ((known & 0x00000080u) == 0x00000080u ? 0x00000200u : 0u); r[1] = (r[1] >> 24u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
+xport_gte_execute(0x280030u); r[1] = r_u32((r[6] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u);
+r[9] = (host_ordering != NULL ? xport_load_le32((const uint8 *)host_ordering + r[7]) : r_u32(r[7])); known = (known & ~0x00000200u) | ((known & 0x00000080u) == 0x00000080u ? 0x00000200u : 0u); r[1] = (r[1] >> 24u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
 r[1] = (r[1] << 24u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); r[1] = r[1] | r[9]; known = (known & ~0x00000002u) | ((known & 0x00000202u) == 0x00000202u ? 0x00000002u : 0u);
 w_u32((r[6] + 0x00000000u), r[1]); r[1] = (r[6] << 8u); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u);
-r[1] = (r[1] >> 8u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); w_u32((r[7] + 0x00000000u), r[1]);
+r[1] = (r[1] >> 8u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); (host_ordering != NULL ? (void)xport_store_le32((uint8 *)host_ordering + r[7], r[1]) : (void)w_u32(r[7], r[1]));
 r[1] = (r[8] >> 24u); known = (known & ~0x00000002u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000002u : 0u); r[1] = r[1] & 0x003Cu; known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
 x = r[1]; y = r[22]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CCF8u); r[1] = value; known = (known & ~0x00000002u) | ((known & 0x00400002u) == 0x00400002u ? 0x00000002u : 0u);
 r[1] = r_u32((r[1] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); r[6] = r[18] + r[0]; known = (known & ~0x00000040u) | ((known & 0x00040001u) == 0x00040001u ? 0x00000040u : 0u);
@@ -1643,15 +1833,31 @@ case 0x8001C4B4u: goto L_8001C4B4; case 0x8001C560u: goto L_8001C560;
 case 0x8001C5ACu: goto L_8001C5AC; case 0x8001C630u: goto L_8001C630;
 case 0x8001C71Cu: goto L_8001C71C; case 0x8001CB8Cu: goto L_8001CB8C;
 case 0x8001CBD8u: goto L_8001CBD8; case 0x8001CD38u: goto L_8001CD38;
-default: return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CD04u, target, known, r); }
+default: return xport_guest_nonlocal_transfer(0x8001BE5Cu, 0x8001CD04u, target, ((matrix_carrier_live != 0u && guest_matrix_carrier == NULL) ? (known & ~0x00000020u) : known), r); }
 L_8001CD0C:; r[8] = (r[8] << 2u); known = (known & ~0x00000100u) | ((known & 0x00000100u) == 0x00000100u ? 0x00000100u : 0u);
 x = r[17]; y = r[8]; value = x + y; if ((~(x ^ y) & (x ^ value) & 0x80000000u) != 0u) xport_mips_overflow_exception(0x8001CD10u); r[7] = value; known = (known & ~0x00000080u) | ((known & 0x00020100u) == 0x00020100u ? 0x00000080u : 0u);
-r[1] = r_u32((r[6] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u); r[9] = r_u32((r[7] + 0x00000000u)); known = (known & ~0x00000200u) | ((known & 0x00000080u) == 0x00000080u ? 0x00000200u : 0u);
+r[1] = r_u32((r[6] + 0x00000000u)); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u); r[9] = (host_ordering != NULL ? xport_load_le32((const uint8 *)host_ordering + r[7]) : r_u32(r[7])); known = (known & ~0x00000200u) | ((known & 0x00000080u) == 0x00000080u ? 0x00000200u : 0u);
 r[1] = (r[1] >> 24u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u); r[1] = (r[1] << 24u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
 r[1] = r[1] | r[9]; known = (known & ~0x00000002u) | ((known & 0x00000202u) == 0x00000202u ? 0x00000002u : 0u); w_u32((r[6] + 0x00000000u), r[1]);
 r[1] = (r[6] << 8u); known = (known & ~0x00000002u) | ((known & 0x00000040u) == 0x00000040u ? 0x00000002u : 0u); r[1] = (r[1] >> 8u); known = (known & ~0x00000002u) | ((known & 0x00000002u) == 0x00000002u ? 0x00000002u : 0u);
-w_u32((r[7] + 0x00000000u), r[1]); L_8001CD38:;
+(host_ordering != NULL ? (void)xport_store_le32((uint8 *)host_ordering + r[7], r[1]) : (void)w_u32(r[7], r[1])); L_8001CD38:;
 return r[2]; }
+
+uint32 v8_native_1BE5C(uint32 model, const MATRIX *matrix, uint32 ordering_table)
+{
+    return v8_renderer_1BE5C(model, matrix, ordering_table, NULL, NULL);
+}
+
+uint32 v8_native_1BE5C_host_ordering(uint32 model, const MATRIX *matrix, uint32 *ordering)
+{
+    return v8_renderer_1BE5C(model, matrix, 0u, NULL, ordering);
+}
+
+uint32 sub_8001BE5C(uint32 model, uint32 matrix, uint32 ordering_table)
+{
+    const MATRIX *matrix_view = (const MATRIX *)psx_addr(matrix, sizeof(MATRIX));
+    return v8_renderer_1BE5C(model, matrix_view, ordering_table, &matrix, NULL);
+}
 
 uint32 sub_8001A584(uint32 object)
 {

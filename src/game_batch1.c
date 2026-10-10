@@ -1,5 +1,8 @@
 #include "psx.h"
-
+#include <stdio.h>
+#include "psx_gpu.h"
+#include <stdlib.h>
+#include <string.h>
 uint32 sub_8005570C(uint32 *registers);
 uint32 sub_800557CC(uint32 *registers);
 uint32 sub_80055858(uint32 *registers, uint32 incoming_s3);
@@ -20,7 +23,7 @@ uint32 sub_800544D0(uint32 *registers);
 uint32 sub_800546E4(uint32 *registers);
 uint32 sub_80011CCC(void);
 uint32 PadGetStatePSX(uint32 port);
-uint32 PadSetActPSX(uint32 port, uint32 actuator, uint32 length);
+void PadSetActPSX(uint32 port, uint32 actuator, uint32 length);
 uint32 PadSetActAlignPSX(uint32 port, uint32 alignment);
 
 uint32 sub_80052544(uint32 address)
@@ -697,7 +700,6 @@ uint32 sub_80054C48(uint32 *registers)
     uint32 base;
     uint32 result;
     FUNCTION_MARKER(0x80054C48u, "SLUS_005.10");
-    (void)registers;
     base = r_u32(0x800652C0u);
     do
     {
@@ -849,7 +851,7 @@ void sub_80017E0C(void);
 uint32 sub_80011F8C(uint32 lane);
 uint32 sub_80012088(uint32 buttons, uint32 map_low, uint32 map_high);
 uint32 sub_80017D5C(void);
-uint32 sub_80019E7C(uint32 flags);
+void sub_80019E7C(uint32 flags);
 uint32 sub_800120D4(void);
 void xport_gte_write_data(uint32 register_index, uint32 value);
 uint32 xport_gte_read_data(uint32 register_index);
@@ -1104,36 +1106,23 @@ uint32 sub_80012088(uint32 buttons, uint32 map_low, uint32 map_high)
     return result;
 }
 
-uint32 sub_80019E7C(uint32 flags)
+void sub_80019E7C(uint32 flags)
 {
-    uint8 local_frame[160];
     uint32 wide = (flags >> 1u) & 1u;
-    uint32 frame, x, y, width;
-    DISPENV *display, *result;
-    DRAWENV *draw;
+    DISPENV display;
+    DRAWENV draw;
     FUNCTION_MARKER(0x80019E7Cu, "SLUS_005.10");
     (void)sub_80018080(flags & 1u);
-    width = 0x280u;
-    if (wide != 0u)
-        width = 0x3C0u;
-    frame = xport_guest_buffer_address(local_frame, sizeof(local_frame));
-    display = (DISPENV *)psx_addr(frame + 0x18u, sizeof(DISPENV));
-    draw = (DRAWENV *)psx_addr(frame + 0x30u, sizeof(DRAWENV));
-    w_u32(frame + 0x10u, 0x1E0u);
-    (void)SetDefDispEnv(display, 0, 0, (sint32)width, 0x1E0);
-    w_u32(frame + 0x10u, 0x1E0u);
-    (void)SetDefDrawEnv(draw, 0, 0, 0x280, 0x1E0);
-    x = r_u8(0x8006531Cu);
-    y = r_u8(0x8006531Du);
-    w_u16(frame + 0x26u, 0xF0u);
-    w_u8(frame + 0x47u, 1u);
-    w_u8(frame + 0x29u, (uint8)wide);
-    w_u16(frame + 0x44u, 0x20u);
-    w_u16(frame + 0x20u, (uint16)(sint16)(sint8)x);
-    w_u16(frame + 0x22u, (uint16)(sint16)(sint8)y);
-    (void)PutDrawEnv(draw);
-    result = PutDispEnv(display);
-    return xport_guest_buffer_address(result, sizeof(DISPENV));
+    (void)SetDefDispEnv(&display, 0, 0, wide != 0u ? 960 : 640, 480);
+    (void)SetDefDrawEnv(&draw, 0, 0, 640, 480);
+    display.screen.h = 240;
+    draw.dfe = 1;
+    display.isrgb24 = (uint8)wide;
+    draw.tpage = 32;
+    display.screen.x = (sint16)(sint8)r_u8(0x8006531Cu);
+    display.screen.y = (sint16)(sint8)r_u8(0x8006531Du);
+    (void)PutDrawEnv(&draw);
+    (void)PutDispEnv(&display);
 }
 
 uint32 sub_80018080(uint32 optional_split)
@@ -1503,26 +1492,28 @@ uint32 sub_80019010(uint32 object, uint32 mode)
 
 void sub_8001A0AC(uint32 rectangle, uint32 color)
 {
-    uint8 packet[16];
-    uint16 halfword;
-    uint32 guest_packet;
+    static TILE packet;
+    static uint32 registered;
     FUNCTION_MARKER(0x8001A0ACu, "SLUS_005.10");
-    packet[3] = 3u;
-    packet[7] = 0x60u;
-    packet[4] = (uint8)color;
-    packet[5] = (uint8)(color >> 8);
-    packet[6] = (uint8)(color >> 16);
-    halfword = r_u16(rectangle);
-    memcpy(packet + 8, &halfword, sizeof(halfword));
-    halfword = r_u16(rectangle + 2u);
-    memcpy(packet + 10, &halfword, sizeof(halfword));
-    halfword = r_u16(rectangle + 4u);
-    memcpy(packet + 12, &halfword, sizeof(halfword));
-    halfword = (uint16)(sint16)r_u16(rectangle + 6u);
-    memcpy(packet + 14, &halfword, sizeof(halfword));
-    guest_packet = xport_guest_buffer_address(packet, sizeof(packet));
-    DrawPrim(psx_addr(guest_packet, sizeof(packet)));
-    return;
+    if (registered == 0u)
+    {
+        if (!gpu_register_packet_range(&packet, sizeof(packet)))
+        {
+            fprintf(stderr, "V8: cannot register rectangle GPU packet\n");
+            abort();
+        }
+        registered = 1u;
+    }
+    packet.tag = 0x03000000u;
+    packet.code = 0x60u;
+    packet.r0 = (uint8)color;
+    packet.g0 = (uint8)(color >> 8);
+    packet.b0 = (uint8)(color >> 16);
+    packet.x0 = (sint16)r_u16(rectangle);
+    packet.y0 = (sint16)r_u16(rectangle + 2u);
+    packet.w = (sint16)r_u16(rectangle + 4u);
+    packet.h = (sint16)r_u16(rectangle + 6u);
+    DrawPrim(&packet);
 }
 
 void sub_80045088(uint32 address);
@@ -1559,44 +1550,43 @@ uint32 sub_80017160(void)
     return state & 0x7FFFu;
 }
 
-void sub_80019A58(uint32 object, uint32 text, uint32 rectangle, uint32 flags, uint32 incoming_s2, uint32 incoming_s3)
+void v8_native_19A58(uint32 object, uint32 text, const PSX_RECT *rectangle, uint32 flags, uint32 incoming_s2, uint32 incoming_s3)
 {
     uint32 x = incoming_s2, y = incoming_s3, mode, width, first, second, font, height, delta, adjusted, color, shadow_x, shadow_y;
-    FUNCTION_MARKER(0x80019A58u, "SLUS_005.10");
     mode = flags & 3u;
     if (mode == 1u)
     {
         width = sub_80019138(object, text);
-        first = (uint32)(sint32)(sint16)r_u16(rectangle);
-        second = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+        first = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
+        second = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
         x = first + second - width;
     }
     else if (mode == 0u)
-        x = (uint32)(sint32)(sint16)r_u16(rectangle);
+        x = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
     else if (mode == 2u)
     {
         width = sub_80019138(object, text);
-        second = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
-        first = (uint32)(sint32)(sint16)r_u16(rectangle);
+        second = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
+        first = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle);
         x = first + ((second - width) >> 1u);
     }
     mode = flags & 12u;
     if (mode == 4u)
     {
-        first = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
+        first = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
         font = r_u32(object);
-        second = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+        second = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
         height = r_u8(font + 6u);
         y = first + second - height;
     }
     else if (mode == 0u)
-        y = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
+        y = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
     else if (mode == 8u)
     {
         font = r_u32(object);
-        second = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+        second = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
         height = r_u8(font + 6u);
-        first = (uint32)(sint32)(sint16)r_u16(rectangle + 2u);
+        first = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 2u);
         delta = second - height;
         adjusted = delta + (delta >> 31u);
         y = first + ((adjusted >> 1u) | (adjusted & 0x80000000u));
@@ -1614,6 +1604,12 @@ void sub_80019A58(uint32 object, uint32 text, uint32 rectangle, uint32 flags, ui
     }
     sub_80019960(object, text, x, y);
     return;
+}
+
+void sub_80019A58(uint32 object, uint32 text, uint32 rectangle, uint32 flags, uint32 incoming_s2, uint32 incoming_s3)
+{
+    FUNCTION_MARKER(0x80019A58u, "SLUS_005.10");
+    v8_native_19A58(object, text, (const PSX_RECT *)psx_addr(rectangle, sizeof(PSX_RECT)), flags, incoming_s2, incoming_s3);
 }
 
 uint32 sub_80019138(uint32 object, uint32 text)
@@ -1648,10 +1644,54 @@ uint32 sub_80019138(uint32 object, uint32 text)
     return total;
 }
 
+static sint32 native_font_merge_host(uint8 *first, uint8 *second)
+{
+    uint32 first_length = first[3];
+    uint32 second_length = second[3];
+    uint32 length = first_length + second_length + 1u;
+    if (length >= 17u)
+        return -1;
+    xport_store_u8(first + 3u, (uint8)length);
+    xport_store_le32(second, 0u);
+    return 0;
+}
+
+uint32 v8_native_19370(uint32 object, uint8 *packet, uint32 character, uint32 x, uint32 y)
+{
+    uint32 font, base_code, page, rgb, clut, height_font, height, delta, glyph, low, high, uv, bearing, width, advance;
+    font = r_u32(object);
+    base_code = r_u8(font + 5u);
+    xport_store_u8(packet + 3u, (uint8)(1u));
+    page = r_u16(object + 0x10u);
+    xport_store_le32(packet + 4u, (page & 0x9FFu) | 0xE1000400u);
+    rgb = r_u32(object + 4u);
+    xport_store_le32(packet + 8u, 0x04000000u);
+    xport_store_le32(packet + 12u, rgb);
+    clut = r_u16(object + 0x12u);
+    xport_store_le16(packet + 0x16u, (uint16)(clut));
+    height_font = r_u32(object);
+    height = r_u8(height_font + 6u);
+    delta = (character & 255u) - base_code;
+    xport_store_le16(packet + 0x1Au, (uint16)(height));
+    glyph = font + (delta << 2u) + delta + 8u;
+    low = r_u8(glyph);
+    high = r_u8(glyph + 1u);
+    uv = r_u16(object + 14u);
+    xport_store_le16(packet + 0x14u, (uint16)(uv + (low | (high << 8u))));
+    bearing = (uint32)(sint32)(sint8)r_u8(glyph + 4u);
+    xport_store_le16(packet + 0x12u, (uint16)(y));
+    xport_store_le16(packet + 0x10u, (uint16)(x + bearing));
+    width = r_u8(glyph + 2u);
+    xport_store_le16(packet + 0x18u, (uint16)(width));
+    (void)native_font_merge_host(packet, packet + 8u);
+    advance = r_u8(glyph + 3u);
+    return x + advance;
+}
+
 void sub_80019960(uint32 object, uint32 text, uint32 x, uint32 y)
 {
-    uint8 local_frame[88];
-    uint32 frame = 0u, frame_mapped = 0u, start_x = x, character, font, height, component;
+    uint32 packet_words[8];
+    uint32 start_x = x, character, font, height, component;
     FUNCTION_MARKER(0x80019960u, "SLUS_005.10");
     character = r_u8(text);
     text += 1u;
@@ -1677,14 +1717,8 @@ void sub_80019960(uint32 object, uint32 text, uint32 x, uint32 y)
         else
         {
             (void)DrawSync(0);
-            if (frame_mapped == 0u)
-            {
-                frame = xport_guest_buffer_address(local_frame, sizeof(local_frame));
-                frame_mapped = 1u;
-            }
-            w_u32(frame + 0x10u, y);
-            x = sub_80019370(object, frame + 0x18u, character, x, y);
-            DrawPrim(psx_addr(frame + 0x18u, 32u));
+            x = v8_native_19370(object, (uint8 *)packet_words, character, x, y);
+            DrawPrim(packet_words);
         }
         character = r_u8(text);
         text += 1u;
@@ -1694,35 +1728,8 @@ void sub_80019960(uint32 object, uint32 text, uint32 x, uint32 y)
 
 uint32 sub_80019370(uint32 object, uint32 packet, uint32 character, uint32 x, uint32 y)
 {
-    uint32 font, base_code, page, rgb, clut, height_font, height, delta, glyph, low, high, uv, bearing, width, advance;
     FUNCTION_MARKER(0x80019370u, "SLUS_005.10");
-    font = r_u32(object);
-    base_code = r_u8(font + 5u);
-    w_u8(packet + 3u, 1u);
-    page = r_u16(object + 0x10u);
-    w_u32(packet + 4u, (page & 0x9FFu) | 0xE1000400u);
-    rgb = r_u32(object + 4u);
-    w_u32(packet + 8u, 0x04000000u);
-    w_u32(packet + 12u, rgb);
-    clut = r_u16(object + 0x12u);
-    w_u16(packet + 0x16u, clut);
-    height_font = r_u32(object);
-    height = r_u8(height_font + 6u);
-    delta = (character & 255u) - base_code;
-    w_u16(packet + 0x1Au, height);
-    glyph = font + (delta << 2u) + delta + 8u;
-    low = r_u8(glyph);
-    high = r_u8(glyph + 1u);
-    uv = r_u16(object + 14u);
-    w_u16(packet + 0x14u, uv + (low | (high << 8u)));
-    bearing = (uint32)(sint32)(sint8)r_u8(glyph + 4u);
-    w_u16(packet + 0x12u, y);
-    w_u16(packet + 0x10u, x + bearing);
-    width = r_u8(glyph + 2u);
-    w_u16(packet + 0x18u, width);
-    (void)MargePrim(packet, packet + 8u);
-    advance = r_u8(glyph + 3u);
-    return x + advance;
+    return v8_native_19370(object, (uint8 *)psx_addr(packet, 28u), character, x, y);
 }
 
 uint32 sub_800190D8(uint32 object)
@@ -1932,6 +1939,8 @@ void sub_800165CC(uint32 wait)
             {
                 do
                 {
+                    // Service native interrupts while awaiting the original callback flag
+                    (void)VSync(-1);
                     value = r_u32(module + 0x5DCCu);
                     if (value != 0u)
                         break;
@@ -1952,3 +1961,131 @@ void sub_800165CC(uint32 wait)
     }
     return;
 }
+
+typedef struct V8_NATIVE_TIM_CONTEXT
+{
+    uint32 flags;
+    uint32 bitmap;
+    int palette_is_descriptor;
+    union
+    {
+        uint32 guest_rectangle;
+        uint8 *descriptor;
+    } palette;
+} V8_NATIVE_TIM_CONTEXT;
+
+static void v8_native_18618(uint32 image, uint8 *tpage_out, uint8 *clut_out, uint8 *uv_out, uint8 *descriptor, V8_NATIVE_TIM_CONTEXT *context)
+{
+    uint32 palette = 0u, rectangle, flags, width, height, stored_width;
+    uint32 pixels, bitmap, x, y, value, shift;
+    sub_800185CC(0x8006F628u, image);
+    rectangle = r_u32(0x8006F62Cu);
+    if (rectangle != 0u)
+    {
+        flags = r_u32(0x8006F628u);
+        if ((flags & 0x10u) != 0u)
+        {
+            width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+            if ((sint32)width < 17)
+                width = 16u;
+            else
+                width = 256u;
+        }
+        else
+            width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+        rectangle = r_u32(0x8006F62Cu);
+        height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+        stored_width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+        palette = sub_80018124(width, height, 16u, 1u, stored_width, 1u);
+        if (palette != 0u)
+        {
+            pixels = r_u32(0x8006F630u);
+            LoadImagePSX((PSX_RECT *)psx_addr(palette, sizeof(PSX_RECT)), (uint32 *)psx_addr(pixels, 1u));
+            if (clut_out != NULL)
+            {
+                x = (uint32)(sint32)(sint16)r_u16(palette);
+                y = (uint32)(sint32)(sint16)r_u16(palette + 2u);
+                value = GetClut((sint32)x, (sint32)y);
+                xport_store_le16(clut_out, (uint16)value);
+            }
+        }
+        else if (clut_out != NULL)
+            xport_store_le16(clut_out, 0u);
+    }
+    else if (clut_out != NULL)
+        xport_store_le16(clut_out, 0u);
+    context->palette_is_descriptor = rectangle == 0u;
+    if (context->palette_is_descriptor)
+        context->palette.descriptor = descriptor;
+    else
+        context->palette.guest_rectangle = palette;
+    rectangle = r_u32(0x8006F634u);
+    flags = r_u32(0x8006F628u);
+    width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
+    height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+    stored_width = 64u << (flags & 3u);
+    bitmap = sub_80018124(width, height, 64u, 256u, stored_width, 256u);
+    if (bitmap != 0u)
+    {
+        pixels = r_u32(0x8006F638u);
+        LoadImagePSX((PSX_RECT *)psx_addr(bitmap, sizeof(PSX_RECT)), (uint32 *)psx_addr(pixels, 1u));
+    }
+    if (!context->palette_is_descriptor)
+        w_u32(0x8006F62Cu, context->palette.guest_rectangle);
+    w_u32(0x8006F634u, bitmap);
+    if (tpage_out != NULL)
+    {
+        x = (uint32)(sint32)(sint16)r_u16(bitmap);
+        flags = r_u32(0x8006F628u);
+        y = (uint32)(sint32)(sint16)r_u16(bitmap + 2u);
+        value = GetTPage((sint32)(flags & 3u), 0, (sint32)x, (sint32)y);
+        xport_store_le16(tpage_out, (uint16)value);
+    }
+    if (uv_out != NULL)
+    {
+        x = r_u16(bitmap);
+        flags = r_u32(0x8006F628u);
+        y = r_u8(bitmap + 2u);
+        shift = (2u - (flags & 3u)) & 31u;
+        value = ((x & 0x3Fu) << shift) | (y << 8);
+        xport_store_le16(uv_out, (uint16)value);
+    }
+    context->flags = r_u32(0x8006F628u);
+    context->bitmap = r_u32(0x8006F634u);
+}
+
+void v8_native_187E4(uint32 image, uint8 *output)
+{
+    V8_NATIVE_TIM_CONTEXT context;
+    uint32 bitmap, flags, width, height, shift;
+    v8_native_18618(image, output + 8u, output + 10u, output + 6u, output, &context);
+    bitmap = context.bitmap;
+    flags = context.flags;
+    width = (uint32)(sint32)(sint16)r_u16(bitmap + 4u);
+    shift = (2u - (flags & 3u)) & 31u;
+    xport_store_le16(output + 2u, (uint16)(width << shift));
+    bitmap = r_u32(0x8006F634u);
+    height = r_u16(bitmap + 6u);
+    xport_store_le16(output, 1u);
+    xport_store_le16(output + 4u, (uint16)height);
+}
+
+
+
+uint32 v8_native_1884C(uint8 *descriptor)
+{
+    uint32 page, position, shift, x, y, clut;
+    if (xport_load_le16(descriptor) == 0u)
+        return 1u;
+    page = xport_load_le16(descriptor + 8u);
+    position = xport_load_le16(descriptor + 6u);
+    shift = (2u - (page >> 7)) & 31u;
+    clut = xport_load_le16(descriptor + 10u);
+    x = ((page & 15u) << 6) + ((position & 255u) >> shift);
+    y = ((page & 16u) << 4) + (position >> 8);
+    if (clut != 0u)
+        (void)sub_8001859C(clut);
+    xport_store_le16(descriptor, 0u);
+    return sub_80018530(x, y);
+}
+

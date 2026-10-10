@@ -27,4 +27,29 @@
 <ItemGroup><ClCompile Include="..\..\game_batch1.c" /></ItemGroup>
 <ItemGroup><ClCompile Include="..\..\game_batch2.c" /></ItemGroup>
 <ItemGroup><ClCompile Include="..\..\game_batch3.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_batch4.c" /><ClCompile Include="..\..\game_native_delivery_1.c" /><ClCompile Include="..\..\game_native_delivery_2.c" /><ClCompile Include="..\..\game_native_delivery_3.c" /><ClCompile Include="..\..\..\..\xport\src\psx_xa.c" /><ClCompile Include="..\..\..\..\xport\src\psx_stream.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_missing_adapters.c" /><ClCompile Include="..\..\game_native_sdk_bindings.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_bios_dispatch.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_boot_image.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_cd_stream.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_disc_toc.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_main_transport.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_module_dispatch.c" /><ClCompile Include="..\..\game_native_shell_entry.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_startup.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_bios_image.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_pad_layout.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_card_recovery.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_directory.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_menu_init.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_card_cleanup.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_video_init.c" /><ClCompile Include="..\..\game_native_shell_intro_screen.c" /><ClCompile Include="..\..\..\..\xport\src\psx_press.c" /><ClCompile Include="..\..\..\..\xport\src\psx_mdec.c" /><ClCompile Include="..\..\..\..\xport\src\psx_vlc.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_menu_resources.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_main_menu.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_4d24.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_3544.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_shell_c690.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_load_entry.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_setup.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_control.c" /></ItemGroup>
+<ItemGroup><ClCompile Include="..\..\game_native_collision.c" /></ItemGroup>
 </Project>

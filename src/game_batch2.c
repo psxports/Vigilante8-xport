@@ -1,4 +1,11 @@
 #include "psx.h"
+#include "psx_spu.h"
+#include "xport_trace.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+void v8_native_stream_read_host(void *destination, uint32 bytes);
+uint32 v8_native_spu_write_host(const void *source, uint32 bytes);
 
 uint32 sub_80015A20(uint32 destination, uint32 bytes);
 uint32 sub_800466F4(uint32 source, uint32 bytes);
@@ -206,24 +213,22 @@ uint32 sub_800159B4(uint32 path)
 
 uint32 sub_800441F8(void)
 {
-    uint8 local_frame[1072];
-    uint32 frame, header, count, spu_address, descriptor, cursor, value, base, index, remaining, chunk;
+    uint8 header[4], transfer_buffer[1024];
+    uint32 count, spu_address, descriptor, cursor, value, base, index, remaining, chunk;
     FUNCTION_MARKER(0x800441F8u, "SLUS_005.10");
-    frame = xport_guest_buffer_address(local_frame, sizeof(local_frame));
-    header = frame + 0x10u;
-    (void)sub_80015A20(header, 4u);
-    value = r_u16(header + 2u);
+    v8_native_stream_read_host(header, 4u);
+    value = xport_load_le16(header + 2u);
     spu_address = (uint32)SpuMalloc((sint32)(((value << 3u) + 63u) & 0xFFFFFFC0u));
     if (spu_address == 0u)
         (void)sub_80015368(0x800658BCu);
-    count = (uint32)(sint32)(sint16)r_u16(header);
+    count = (uint32)(sint32)(sint16)xport_load_le16(header);
     descriptor = sub_800116F4((count << 2u) + 4u);
     w_u16(descriptor + 2u, spu_address >> 3u);
-    value = r_u16(header);
+    value = xport_load_le16(header);
     w_u16(descriptor, value);
-    count = (uint32)(sint32)(sint16)r_u16(header);
+    count = (uint32)(sint32)(sint16)xport_load_le16(header);
     (void)sub_80015A20(descriptor + 4u, count << 2u);
-    count = (uint32)(sint32)(sint16)r_u16(header);
+    count = (uint32)(sint32)(sint16)xport_load_le16(header);
     index = 0u;
     cursor = descriptor;
     while ((sint32)index < (sint32)count)
@@ -231,19 +236,19 @@ uint32 sub_800441F8(void)
         value = r_u16(cursor + 4u);
         base = r_u16(descriptor + 2u);
         w_u16(cursor + 4u, value + base);
-        count = (uint32)(sint32)(sint16)r_u16(header);
+        count = (uint32)(sint32)(sint16)xport_load_le16(header);
         index += 1u;
         cursor += 4u;
     }
     (void)SpuSetTransferMode(0);
     (void)SpuSetTransferStartAddr(spu_address);
-    remaining = r_u16(header + 2u) << 3u;
+    remaining = xport_load_le16(header + 2u) << 3u;
     while (remaining != 0u)
     {
         chunk = ((sint32)remaining < 1024) ? remaining : 1024u;
-        (void)sub_80015A20(frame + 0x18u, chunk);
+        v8_native_stream_read_host(transfer_buffer, chunk);
         (void)SpuSetTransferStartAddr(spu_address);
-        (void)sub_800466F4(frame + 0x18u, chunk);
+        (void)v8_native_spu_write_host(transfer_buffer, chunk);
         while (SpuIsTransferCompleted(0) == 0)
             continue;
         remaining -= chunk;
@@ -333,6 +338,22 @@ uint32 sub_80015A20(uint32 destination, uint32 bytes)
     return 1u;
 }
 
+uint32 v8_native_spu_write_host(const void *source, uint32 bytes)
+{
+    uint32 count = bytes;
+    if (count > 0x7EFF0u)
+        count = 0x7EFF0u;
+    (void)spu_write_host(source, count);
+    if (spu_transfer_failed())
+    {
+        fprintf(stderr, "SPU host upload failed: bytes %u\n", count);
+        abort();
+    }
+    if (r_u32(0x8005EE0Cu) == 0u)
+        w_u32(0x8005EE08u, 0u);
+    return count;
+}
+
 uint32 sub_800466F4(uint32 source, uint32 bytes)
 {
     uint32 count = bytes;
@@ -382,22 +403,29 @@ uint32 sub_80017DB4(uint32 node)
     return result;
 }
 
-uint32 sub_8001A24C(uint32 rectangle)
+uint32 v8_native_1A24C(const PSX_RECT *rectangle)
 {
     uint32 width, height, node, x, y;
-    FUNCTION_MARKER(0x8001A24Cu, "SLUS_005.10");
-    width = (uint32)(sint32)(sint16)r_u16(rectangle + 4u);
-    height = (uint32)(sint32)(sint16)r_u16(rectangle + 6u);
+    width = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 4u);
+    height = (uint32)(sint32)(sint16)xport_load_le16((const uint8 *)rectangle + 6u);
     node = sub_80018124(width, height, 1u, 1u, 1u, 1u);
     x = (uint32)(sint32)(sint16)r_u16(node);
     y = (uint32)(sint32)(sint16)r_u16(node + 2u);
-    (void)MoveImage((PSX_RECT *)psx_addr(rectangle, sizeof(PSX_RECT)), (sint32)x, (sint32)y);
+    (void)MoveImage((PSX_RECT *)rectangle, (sint32)x, (sint32)y);
     return node;
+}
+
+uint32 sub_8001A24C(uint32 rectangle)
+{
+    FUNCTION_MARKER(0x8001A24Cu, "SLUS_005.10");
+    return v8_native_1A24C((const PSX_RECT *)psx_addr(rectangle, sizeof(PSX_RECT)));
 }
 
 void sub_800126F0(void)
 {
     FUNCTION_MARKER(0x800126F0u, "SLUS_005.10");
+    /* Service asynchronous IRQs while the native caller waits for input */
+    psx_native_poll_events();
     (void)sub_800120D4();
 }
 
@@ -487,7 +515,10 @@ uint32 sub_8001B49C(uint32 object, uint32 index, uint32 incoming_s1);
 uint32 sub_8001D708(uint32 node);
 sint32 sub_80049534(uint32 position);
 uint32 xport_guest_buffer_address(void *host_buffer, size_t bytes);
-const uint32 xport_cd_sync_callback_address = 0x80060080u;
+const uint32 xport_cd_sync_callback_address = 0x8006007Cu;
+const uint32 xport_cd_ready_callback_address = 0x80060080u;
+const uint32 xport_cd_status_address = 0x8006008Cu;
+const uint32 xport_cd_setloc_table_address = 0x8005FFF4u;
 
 uint32 sub_80011BE4(uint32 destination)
 {
@@ -562,6 +593,29 @@ uint32 sub_80016DA8(uint32 destination)
     return destination;
 }
 
+MATRIX *v8_native_16DA8(MATRIX *destination)
+{
+    uint32 first, second, third;
+    uint8 *bytes = (uint8 *)destination;
+    first = r_u32(0x800568B4u);
+    second = r_u32(0x800568B8u);
+    third = r_u32(0x800568BCu);
+    xport_store_le32(bytes, first);
+    xport_store_le32(bytes + 4u, second);
+    xport_store_le32(bytes + 8u, third);
+    first = r_u32(0x800568C0u);
+    second = r_u32(0x800568C4u);
+    third = r_u32(0x800568C8u);
+    xport_store_le32(bytes + 12u, first);
+    xport_store_le32(bytes + 16u, second);
+    xport_store_le32(bytes + 20u, third);
+    first = r_u32(0x800568CCu);
+    second = r_u32(0x800568D0u);
+    xport_store_le32(bytes + 24u, first);
+    xport_store_le32(bytes + 28u, second);
+    return destination;
+}
+
 uint32 sub_8004D314(uint32 matrix, uint32 translation)
 {
     uint32 first, second, third;
@@ -579,6 +633,125 @@ uint32 sub_8001D3D8(void)
 {
     FUNCTION_MARKER(0x8001D3D8u, "SLUS_005.10");
     return sub_80044EFC(0x8006F760u, 0u, 32u);
+}
+
+static uint32 native_matrix_apply_host(uint32 matrix, const uint8 *vector, uint32 destination)
+{
+    uint32 words[5];
+    uint32 x, y, z, high_x, high_y, high_z;
+    words[0] = r_u32(matrix + 0u);
+    words[1] = r_u32(matrix + 4u);
+    words[2] = r_u32(matrix + 8u);
+    words[3] = r_u32(matrix + 12u);
+    words[4] = r_u32(matrix + 16u);
+    xport_gte_write_control(0u, words[0]);
+    xport_gte_write_control(1u, words[1]);
+    xport_gte_write_control(2u, words[2]);
+    xport_gte_write_control(3u, words[3]);
+    xport_gte_write_control(4u, words[4]);
+    x = xport_load_le32(vector + 0u);
+    y = xport_load_le32(vector + 4u);
+    z = xport_load_le32(vector + 8u);
+    xport_gte_write_data(9u, (uint32)((sint32)x >> 15));
+    xport_gte_write_data(10u, (uint32)((sint32)y >> 15));
+    xport_gte_write_data(11u, (uint32)((sint32)z >> 15));
+    x &= 0x7FFFu;
+    y &= 0x7FFFu;
+    xport_gte_execute(0x41E012u);
+    z &= 0x7FFFu;
+    high_x = xport_gte_read_data(25u);
+    high_y = xport_gte_read_data(26u);
+    high_z = xport_gte_read_data(27u);
+    xport_gte_write_data(9u, x);
+    xport_gte_write_data(10u, y);
+    xport_gte_write_data(11u, z);
+    high_x <<= 3;
+    high_y <<= 3;
+    xport_gte_mvmva(0x49E012u);
+    high_z <<= 3;
+    x = xport_gte_read_data(25u);
+    y = xport_gte_read_data(26u);
+    z = xport_gte_read_data(27u);
+    x += high_x;
+    y += high_y;
+    z += high_z;
+    w_u32(destination + 0u, x);
+    w_u32(destination + 4u, y);
+    w_u32(destination + 8u, z);
+    return destination;
+}
+
+static uint32 native_matrix_inverse_host(const MATRIX *source, uint32 destination)
+{
+    uint32 first, second, third;
+    (void)TransposeMatrix((MATRIX *)source, (MATRIX *)psx_addr(destination, 18u));
+    (void)native_matrix_apply_host(destination, (const uint8 *)source + 20u, destination + 20u);
+    first = r_u32(destination + 20u);
+    second = r_u32(destination + 24u);
+    third = r_u32(destination + 28u);
+    w_u32(destination + 20u, 0u - first);
+    w_u32(destination + 24u, 0u - second);
+    w_u32(destination + 28u, 0u - third);
+    return destination;
+}
+
+uint32 v8_native_1D9C0(const MATRIX *source, uint32 projection)
+{
+    uint32 first, second, third;
+    first = xport_load_le32((const uint8 *)source + 0u);
+    second = xport_load_le32((const uint8 *)source + 4u);
+    third = xport_load_le32((const uint8 *)source + 8u);
+    w_u32(0x8006F6E0u + 0u, first);
+    w_u32(0x8006F6E0u + 4u, second);
+    w_u32(0x8006F6E0u + 8u, third);
+    first = xport_load_le32((const uint8 *)source + 12u);
+    second = xport_load_le32((const uint8 *)source + 16u);
+    third = xport_load_le32((const uint8 *)source + 20u);
+    w_u32(0x8006F6E0u + 12u, first);
+    w_u32(0x8006F6E0u + 16u, second);
+    w_u32(0x8006F6E0u + 20u, third);
+    first = xport_load_le32((const uint8 *)source + 24u);
+    second = xport_load_le32((const uint8 *)source + 28u);
+    w_u32(0x8006F6E0u + 24u, first);
+    w_u32(0x8006F6E0u + 28u, second);
+    first = r_u32(0x8006F6E0u + 0u);
+    second = r_u32(0x8006F6E0u + 4u);
+    w_u32(0x8006F740u + 0u, first);
+    w_u32(0x8006F740u + 4u, second);
+    first = r_u32(0x8006F6E0u + 8u);
+    second = r_u32(0x8006F6E0u + 12u);
+    w_u32(0x8006F740u + 8u, first);
+    w_u32(0x8006F740u + 12u, second);
+    first = r_u32(0x8006F6E0u + 16u);
+    second = r_u32(0x8006F6E0u + 20u);
+    w_u32(0x8006F740u + 16u, first);
+    w_u32(0x8006F740u + 20u, second);
+    first = r_u32(0x8006F6E0u + 24u);
+    second = r_u32(0x8006F6E0u + 28u);
+    w_u32(0x8006F740u + 24u, first);
+    w_u32(0x8006F740u + 28u, second);
+    (void)native_matrix_inverse_host(source, 0x8006F680u);
+    w_u32(0x800659D8u, projection);
+    sub_8004D544(projection);
+    (void)MulMatrix0((MATRIX *)psx_addr(0x8006F720u, 20u), (MATRIX *)source, (MATRIX *)psx_addr(0x8006F700u, 20u));
+    (void)sub_8001D898(0x8006F680u);
+    first = r_u32(0x8006F680u + 0u);
+    second = r_u32(0x8006F680u + 4u);
+    w_u32(0x8006F660u + 0u, first);
+    w_u32(0x8006F660u + 4u, second);
+    first = r_u32(0x8006F680u + 8u);
+    second = r_u32(0x8006F680u + 12u);
+    w_u32(0x8006F660u + 8u, first);
+    w_u32(0x8006F660u + 12u, second);
+    first = r_u32(0x8006F680u + 16u);
+    second = r_u32(0x8006F680u + 20u);
+    w_u32(0x8006F660u + 16u, first);
+    w_u32(0x8006F660u + 20u, second);
+    first = r_u32(0x8006F680u + 24u);
+    second = r_u32(0x8006F680u + 28u);
+    w_u32(0x8006F660u + 24u, first);
+    w_u32(0x8006F660u + 28u, second);
+    return sub_80016E64(0x8006F660u);
 }
 
 uint32 sub_8001D9C0(uint32 source, uint32 projection)
@@ -713,11 +886,10 @@ void sub_8004D544(uint32 projection)
 uint32 sub_8001D898(uint32 matrix)
 {
     uint8 frame[96];
-    uint32 frame_address;
-    uint32 projection, width, height, first, second, third, fourth;
+    uint32 projection, width, height, first, second, third, fourth, zero_index;
     FUNCTION_MARKER(0x8001D898u, "SLUS_005.10");
-    frame_address = xport_guest_buffer_address(frame, sizeof(frame));
-    (void)sub_80044EFC(frame_address + 48u, 0u, 32u);
+    for (zero_index = 0u; zero_index < 32u; ++zero_index)
+        frame[48u + zero_index] = 0u;
     projection = r_u16(0x800659D8u);
     width = r_u32(0x800659DCu);
     height = r_u32(0x800659E0u);
@@ -961,4 +1133,42 @@ uint32 sub_8001AAA8(uint32 object, uint32 descriptor, uint32 allocation_bytes)
     }
     sub_8001D708(node);
     return node;
+}
+
+
+void v8_native_16E64(MATRIX *input)
+{
+    uint32 x, z, root, reciprocal, first, second, nx, nz, a, b, result;
+    uint8 *matrix = (uint8 *)input;
+    x = (uint32)(sint32)(sint16)xport_load_le16(matrix);
+    z = (uint32)(sint32)(sint16)xport_load_le16(matrix + 12u);
+    root = SquareRoot0((sint32)(x * x + z * z));
+    reciprocal = root == 0u ? 0xFFFFFFFFu : (uint32)((sint64)0x1000000 / (sint32)root);
+    x = (uint32)(sint32)(sint16)xport_load_le16(matrix);
+    first = x * reciprocal;
+    if ((sint32)first < 0) first += 4095u;
+    z = (uint32)(sint32)(sint16)xport_load_le16(matrix + 12u);
+    second = z * reciprocal;
+    nx = (uint32)((sint32)first >> 12);
+    if ((sint32)second < 0) second += 4095u;
+    xport_store_le16(matrix + 16u, (uint16)(root));
+    a = (uint32)(sint32)(sint16)xport_load_le16(matrix + 6u);
+    b = (uint32)(sint32)(sint16)xport_load_le16(matrix + 10u);
+    nz = (uint32)((sint32)second >> 12);
+    result = nx * a - nz * b;
+    xport_store_le16(matrix + 12u, (uint16)(0u));
+    if ((sint32)result < 0) result += 4095u;
+    b = (uint32)(sint32)(sint16)xport_load_le16(matrix + 10u);
+    first = (uint32)((sint32)result >> 12);
+    result = nz * a + nx * b;
+    xport_store_le16(matrix + 6u, (uint16)(first));
+    if ((sint32)result < 0) result += 4095u;
+    x = (uint32)(sint32)(sint16)xport_load_le16(matrix);
+    z = (uint32)(sint32)(sint16)xport_load_le16(matrix + 4u);
+    first = (uint32)((sint32)result >> 12);
+    result = nx * x - nz * z;
+    xport_store_le16(matrix + 10u, (uint16)(first));
+    if ((sint32)result < 0) result += 4095u;
+    xport_store_le16(matrix, (uint16)((uint32)((sint32)result >> 12)));
+    xport_store_le16(matrix + 4u, (uint16)(0u));
 }

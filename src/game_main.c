@@ -1,6 +1,47 @@
 #include "psx.h"
+#include "psx_spu.h"
+#include "psx_gpu.h"
 #include "xport.h"
 #include "xport_trace.h"
+#include <string.h>
+#include <stdlib.h>
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
+
+uint32 v8_native_19D10(uint32 message, uint32 font, uint32 *ordering, uint32 ticks);
+void v8_native_18F7C(uint32 overlay, uint32 *ordering);
+void v8_native_2AF98(uint32 player, uint32 view, uint32 *ordering);
+void v8_native_2B7BC(uint32 player, uint32 matrix, uint32 *ordering);
+void v8_native_2A25C(sint32 x, sint32 y, uint32 *ordering);
+void v8_native_12828(uint32 display, uint32 draw, uint32 *ordering, uint32 end);
+void v8_native_19C64(uint32 font, uint32 text, uint32 width, uint32 rows, uint32 *ordering);
+void v8_native_22BA8(const char *message, uint32 text, uint32 flags);
+
+uint32 v8_native_cd_ready_register(uint32 guest_callback);
+sint32 v8_native_cd_stream_start(CdlLOC *position);
+void v8_native_cd_stream_pump(void);
+
+uint32 xport_gpu_status_read_missing(uint32 address);
+uint32 xport_cd_controller_read_missing(uint32 address, uint32 width);
+void xport_cd_controller_write_missing(uint32 address, uint32 width, uint32 value);
+void xport_memory_control_write32_missing(uint32 address, uint32 value);
+uint32 CDREAD_OBJ_32CPSX(uint32 retry);
+static uint32 v8_sdk_timer_count(uint32 address);
+static sint32 v8_sdk_vsync_counter(void);
+static uint32 v8_sdk_cd_read(uint32 address);
+static void v8_sdk_cd_write(uint32 address, uint32 value);
+static sint32 v8_sdk_cd_timeout_check(void);
+static void v8_sdk_cd_poll_callbacks(void);
+static sint32 v8_sdk_cd_command_null(uint32 command, uint32 asynchronous);
+static sint32 v8_sdk_cd_pause_async(void);
+static void v8_sdk_cd_write32(uint32 address, uint32 value);
+static uint32 v8_sdk_cd_sync(uint32 mode, uint32 result_guest);
+static void v8_sdk_cd_timeout_reset(void);
+static uint32 v8_sdk_bios_irq_enabled(void);
+static sint32 v8_sdk_cd_sector_sync_host(void *destination, uint32 word_count);
+static sint32 v8_sdk_cd_sector_async_host(void *destination, uint32 word_count);
+static sint32 v8_sdk_cd_position_host(const uint8 *position);
 
 /* Unresolved until the original PsyQ graph type storage is audited */
 const uint32 xport_gpu_graph_type_address = 0x80064FC4u;
@@ -22,8 +63,37 @@ sint32 sub_800116B4(void)
     return sub_80015098();
 }
 
+void v8_native_bind_bios_callbacks(void);
+sint32 v8_native_load_boot_image(void);
+sint32 v8_native_load_bios_image(void);
+uint32 v8_native_bios_initialize_devices(uint32 boot_choice);
+sint32 v8_native_bind_disc_toc(void);
+
 void xport_main(void)
 {
+#if defined(_WIN32) && defined(_DEBUG)
+    if (getenv("V8_NO_CRITICAL_DIALOGS"))
+    {
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _set_abort_behavior(0u, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    }
+#endif
+    if (!v8_native_load_bios_image())
+        return;
+    (void)v8_native_bios_initialize_devices(0u);
+    if (!v8_native_load_boot_image())
+        return;
+    if (!cd_mount_cue("../iso/Vigilante 8 (USA) (v1.0).cue"))
+    {
+        fprintf(stderr, "V8: cannot mount configured disc image\n");
+        return;
+    }
+    if (!v8_native_bind_disc_toc())
+        return;
+    v8_native_bind_bios_callbacks();
     sub_800116B4();
 }
 
@@ -65,10 +135,9 @@ sint32 CD_getsector(uint32 guest_destination, uint32 words);
 void sub_8001714C(uint32 counter);
 uint32 sub_80053A24(void);
 void sub_80053A34(void);
-sint32 OpenEvent(uint32 event_class, uint32 specification, uint32 mode, uint32 guest_callback);
-sint32 EnableEvent(uint32 handle);
+sint32 OpenEventGuest(uint32 event_class, uint32 specification, uint32 mode, uint32 guest_callback);
 uint32 sub_80013CAC(void);
-sint32 GetRCnt(sint32 counter);
+sint32 GetRCnt(uint32 counter);
 void _boot(void);
 
 sint32 sub_80015098(void)
@@ -90,7 +159,7 @@ sint32 sub_80015098(void)
     sub_8001714C(counter);
     SetRCnt(0xF2000002u, (uint16)0xFFFFFFFFu, 0x1000u);
     sub_80053A24();
-    event = (uint32)OpenEvent(0xF2000002u, 2u, 0x1000u, 0x80014FF0u);
+    event = (uint32)OpenEventGuest(0xF2000002u, 2u, 0x1000u, 0x80014FF0u);
     EnableEvent(event);
     sub_80053A34();
     sub_80013CAC();
@@ -150,30 +219,31 @@ uint32 sub_80015E8C(void)
 void sub_80053A34(void)
 {
     FUNCTION_MARKER(0x80053A34u, "SLUS_005.10");
-    /* User-authorized stub for the absent BIOS syscall service */
-    abort();
+    xport_bios_exit_critical();
 }
 
 sint32 sub_800495B4(void)
 {
     uint8 response[8];
     uint32 reason, flags = 0u, count = 0u, i;
-    uint32 result, destination;
+    uint32 result, destination, irq_pointer, target;
+    uint32 command, code0, code1, command_string;
 
     FUNCTION_MARKER(0x800495B4u, "SLUS_005.10");
-    w_u8(r_u32(0x80060344u), 1u);
-    reason = r_u8(r_u32(0x80060350u)) & 7u;
+    v8_sdk_cd_write(r_u32(0x80060344u), 1u);
+    irq_pointer = r_u32(0x80060350u);
+    reason = v8_sdk_cd_read(irq_pointer) & 7u;
     if (reason == 0u)
         return 0;
-    while (reason != (r_u8(r_u32(0x80060350u)) & 7u))
-        reason = r_u8(r_u32(0x80060350u)) & 7u;
-    while (count < 8u && (r_u8(r_u32(0x80060344u)) & 0x20u) != 0u)
-        response[count++] = r_u8(r_u32(0x80060348u));
+    while (reason != (v8_sdk_cd_read(irq_pointer) & 7u))
+        reason = v8_sdk_cd_read(irq_pointer) & 7u;
+    while (count < 8u && (v8_sdk_cd_read(r_u32(0x80060344u)) & 0x20u) != 0u)
+        response[count++] = (uint8)v8_sdk_cd_read(r_u32(0x80060348u));
     for (i = count; i < 8u; ++i)
         response[i] = 0u;
-    w_u8(r_u32(0x80060344u), 1u);
-    w_u8(r_u32(0x80060350u), 7u);
-    w_u8(r_u32(0x8006034Cu), 7u);
+    v8_sdk_cd_write(r_u32(0x80060344u), 1u);
+    v8_sdk_cd_write(r_u32(0x80060350u), 7u);
+    v8_sdk_cd_write(r_u32(0x8006034Cu), 7u);
     if (reason != 3u || r_u32(0x80060244u + 4u * r_u8(0x8006009Du)) != 0u)
     {
         if ((r_u32(0x8006008Cu) & 0x10u) == 0u && (response[0] & 0x10u) != 0u)
@@ -184,29 +254,37 @@ sint32 sub_800495B4(void)
     }
     if (reason == 5u && (sint32)r_u32(0x80060088u) > 0)
     {
-        printf("%s", (const char *)psx_addr(0x80010FECu, 1u));
+        printf((const char *)psx_addr(0x80010FECu, 1u));
         if ((sint32)r_u32(0x80060088u) > 0)
+        {
+            command = r_u8(0x8006009Du);
+            code0 = r_u32(0x8006008Cu);
+            code1 = r_u32(0x80060090u);
+            command_string = r_u32(0x800600A4u + 4u * command);
             printf((const char *)psx_addr(0x80010FF8u, 1u),
-                (const char *)psx_addr(r_u32(0x800600A4u + 4u * r_u8(0x8006009Du)), 1u),
-                r_u32(0x8006008Cu), r_u32(0x80060090u));
+                (const char *)psx_addr(command_string, 1u), code0, code1);
+        }
     }
-    switch (reason)
+    if (reason - 1u >= 5u)
+        goto unknown_reason;
+    target = r_u32(0x80011034u + 4u * (reason - 1u));
+    switch (target)
     {
-    case 1u:
+    case 0x8004995Cu:
         if (flags != 0u && count == 1u)
             flags = 0u;
         w_u8(0x8006035Du, flags != 0u ? 5u : 1u);
         for (i = 0u; i < 8u; ++i)
             w_u8(0x800A3248u + i, response[i]);
-        w_u8(r_u32(0x80060344u), 0u);
-        w_u8(r_u32(0x80060350u), 0u);
+        v8_sdk_cd_write(r_u32(0x80060344u), 0u);
+        v8_sdk_cd_write(r_u32(0x80060350u), 0u);
         return 4;
-    case 2u:
+    case 0x80049910u:
         w_u8(0x8006035Cu, flags != 0u ? 5u : 2u);
         destination = 0x800A3240u;
         result = 2u;
         break;
-    case 3u:
+    case 0x80049810u:
         if (flags != 0u)
         {
             w_u8(0x8006035Cu, 5u);
@@ -224,7 +302,7 @@ sint32 sub_800495B4(void)
         }
         destination = 0x800A3240u;
         break;
-    case 4u:
+    case 0x800499DCu:
         w_u8(0x8006035Eu, 4u);
         w_u8(0x8006035Du, r_u8(0x8006035Eu));
         for (i = 0u; i < 8u; ++i)
@@ -232,7 +310,7 @@ sint32 sub_800495B4(void)
         destination = 0x800A3248u;
         result = 4u;
         break;
-    case 5u:
+    case 0x80049A5Cu:
         w_u8(0x8006035Du, 5u);
         w_u8(0x8006035Cu, r_u8(0x8006035Du));
         for (i = 0u; i < 8u; ++i)
@@ -241,6 +319,10 @@ sint32 sub_800495B4(void)
         result = 6u;
         break;
     default:
+        /* Unresolved transfer outside the audited case entries */
+        abort();
+    case 0x80049ADCu:
+unknown_reason:
         puts((const char *)psx_addr(0x80011014u, 1u));
         printf((const char *)psx_addr(0x80011028u, 1u), reason);
         return 0;
@@ -277,7 +359,6 @@ sint32 sub_80049534(uint32 position)
 sint32 sub_8004AD14(uint32 reason, uint32 response)
 {
     uint8 sector[16];
-    uint32 position;
     uint32 callback;
     sint32 result;
     uint32 finish;
@@ -290,17 +371,16 @@ sint32 sub_8004AD14(uint32 reason, uint32 response)
     {
         if (r_u32(0x800603A8u) == 512u)
         {
-            position = xport_guest_buffer_address(sector, sizeof(sector));
             if ((r_u32(0x800603C8u) & 1u) != 0u)
             {
                 xport_cd_data_guest_callback(0u);
-                sub_800493CC(position, 3u);
+                v8_sdk_cd_sector_async_host(sector, 3u);
                 CdDataSync(0);
                 xport_cd_data_guest_callback(0x8004AF74u);
             }
             else
-                sub_800493AC(position, 3u);
-            if ((uint32)sub_80049534(position) != r_u32(0x800603B8u))
+                v8_sdk_cd_sector_sync_host(sector, 3u);
+            if ((uint32)v8_sdk_cd_position_host(sector) != r_u32(0x800603B8u))
             {
                 puts((const char *)psx_addr(0x800110D4u, 1u));
                 w_u32(0x800603ACu, 0xFFFFFFFFu);
@@ -316,17 +396,17 @@ sint32 sub_8004AD14(uint32 reason, uint32 response)
             w_u32(0x800603B8u, r_u32(0x800603B8u) + 1u);
         }
     }
-    w_u32(0x800603B0u, (uint32)sub_80047E44(-1));
+    w_u32(0x800603B0u, (uint32)v8_sdk_vsync_counter());
     if ((sint32)r_u32(0x800603ACu) < 0)
-        sub_8004B040(1u);
-    result = sub_80047E44(-1);
+        CDREAD_OBJ_32CPSX(1u);
+    result = v8_sdk_vsync_counter();
     if ((sint32)(r_u32(0x800603B4u) + 1200u) < result)
         w_u32(0x800603ACu, 0xFFFFFFFFu);
     result = (sint32)r_u32(0x800603ACu);
     finish = result == 0;
     if (!finish)
     {
-        result = sub_80047E44(-1);
+        result = v8_sdk_vsync_counter();
         finish = (sint32)(r_u32(0x800603B4u) + 1200u) < result;
     }
     if (finish)
@@ -335,7 +415,7 @@ sint32 sub_8004AD14(uint32 reason, uint32 response)
         xport_cd_ready_guest_callback(r_u32(0x800603C0u));
         if ((r_u32(0x800603C8u) & 1u) != 0u)
             xport_cd_data_guest_callback(r_u32(0x800603C4u));
-        result = sub_8004910C(9u, 0u);
+        result = v8_sdk_cd_pause_async();
         callback = r_u32(0x80060394u);
         if (callback != 0u)
             result = xport_guest_call2(callback, r_u32(0x800603ACu) == 0u ? 2u : 5u, response);
@@ -486,7 +566,7 @@ sint32 sub_8001570C(sint32 sector)
     FUNCTION_MARKER(0x8001570Cu, "SLUS_005.10");
     w_u32(0x800659B4u, (uint32)sector);
     xport_store_le32(mode, r_u32(0x8006565Cu));
-    xport_cd_ready_guest_callback(0x80015644u);
+    v8_native_cd_ready_register(0x80015644u);
     initial_buffer = sub_8001178C(0x800u, 2u);
     w_u32(0x800659ACu, initial_buffer);
     observed_buffer = r_u32(0x800659ACu);
@@ -494,7 +574,7 @@ sint32 sub_8001570C(sint32 sector)
     w_u32(0x800659A8u, observed_buffer);
     CdControl(0x0Eu, mode, NULL);
     CdIntToPos((sint32)r_u32(0x800659B4u), &position);
-    return CdControl(0x06u, (uint8 *)&position, NULL);
+    return v8_native_cd_stream_start(&position);
 }
 
 uint32 sub_8001178C(uint32 count, uint32 size)
@@ -539,7 +619,7 @@ sint32 sub_800493AC(uint32 destination,uint32 word_count);
 uint32 sub_80044080(uint32 enabled, uint32 volume, uint32 setting);
 uint32 sub_80043A74(void);
 sint32 CD_vol(CdlATV *volume);
-uint32 SpuInitMalloc(uint32 count, uint32 table);
+
 sint32 sub_8004F1E8(void);
 void sub_8001714C(uint32 counter);
 uint32 sub_80047674(uint32 left, uint32 right);
@@ -548,6 +628,7 @@ uint32 sub_80053A24(void);
 char *strcpy(char *destination, const char *source);
 uint32 sub_80013CAC(void);
 uint32 xport_guest_call0(uint32 target);
+uint32 v8_native_module_entry0(uint32 module);
 uint32 xport_guest_buffer_address(void *host_buffer, size_t bytes);
 sint32 MargePrim(uint32 first, uint32 second);
 uint32 sub_80011834(void);
@@ -555,14 +636,15 @@ uint32 sub_800128D4(void);
 uint32 sub_800251FC(uint32 mode);
 uint32 sub_80011ADC(uint32 path);
 void sub_80029DEC(void);
-void sub_800227A4(uint32 mask);
+void v8_native_29DEC(void);
+void v8_native_227A4(uint32 mask);
 uint32 sub_80044360(uint32 path);
 uint32 sub_80015F80(uint32 path);
 void sub_800165CC(uint32 wait);
-void sub_80017FD4(uint32 value);
+void v8_native_17FD4(uint32 value);
 uint32 sub_80019034(uint32 asset, uint32 size);
-void sub_8001910C(uint32 font);
-void sub_8002A598(void);
+uint32 v8_native_1910C(uint32 object);
+uint32 v8_native_2A598(void);
 void sub_80022BA8(uint32 message, uint32 text, uint32 flags);
 void sub_80012980(void);
 void sub_800212C4(uint32 counter);
@@ -587,7 +669,7 @@ void sub_8002AF98(uint32 player, uint32 view, uint32 ordering);
 void sub_8002B7BC(uint32 player, uint32 matrix, uint32 ordering);
 void sub_8002A25C(sint32 x, sint32 y, uint32 ordering);
 void sub_80012828(uint32 display, uint32 draw, uint32 ordering, uint32 end);
-void sub_800128BC(void);
+uint32 sub_800128BC(void);
 void sub_8002B8D0(uint32 player);
 void sub_80019C64(uint32 font, uint32 text, uint32 width, uint32 rows, uint32 ordering);
 uint32 sub_800220D4(void);
@@ -604,7 +686,7 @@ void sub_80041E80(void);
 void sub_8001356C(uint32 font);
 uint32 sub_800190D8(uint32 object);
 uint32 sub_80011914(uint32 value);
-void sub_80016678(uint32 value);
+uint32 sub_80016678(uint32 value);
 
 uint32 sub_800451C0(uint32 count, uint32 size)
 {
@@ -644,6 +726,7 @@ uint32 sub_800156D4(void)
     {
         do
         {
+            v8_native_cd_stream_pump();
             ready = r_u32(0x800659ACu);
         } while (ready == previous);
     }
@@ -922,7 +1005,7 @@ void sub_80015798(void)
 {
     FUNCTION_MARKER(0x80015798u, "SLUS_005.10");
     CdControl(9u, NULL, NULL);
-    xport_cd_ready_guest_callback(0u);
+    v8_native_cd_ready_register(0u);
     sub_80045088(r_u32(0x800659A4u));
 }
 
@@ -1010,8 +1093,7 @@ uint32 sub_80045134(uint32 address, uint32 size)
 uint32 sub_80053A24(void)
 {
     FUNCTION_MARKER(0x80053A24u, "SLUS_005.10");
-    /* User-authorized missing BIOS syscall service */
-    abort();
+    return (uint32)xport_bios_enter_critical();
 }
 
 void sub_8001714C(uint32 counter)
@@ -1023,31 +1105,38 @@ void sub_8001714C(uint32 counter)
 
 uint32 sub_80013CAC(void)
 {
-    uint8 local_frame[0xC8];
+    static uint32 packets[16];
+    static uint32 ordering_word;
+    static sint32 packets_registered;
+    char filename[64];
+    PSX_RECT clear_rect;
+    uint32 restart_flag = 0u, quit_countdown, frame_count, first_camera, second_camera;
+    uint32 accumulated_flags;
+    uint32 *packet, *ordering = &ordering_word;
     const uint32 gp = 0x80065304u;
-    uint32 frame, packet, ordering, overlay, mask, index, module, string, asset;
+    uint32 overlay, mask, index, module, string, asset;
     uint32 first, second, target, selected, other, selected_view, view_first, view_second;
-    uint32 ticks, iteration, flags_first, flags_second, value, value2, a, b, c, d;
+    uint32 ticks, iteration, flags_first, flags_second, value, value2, a, b, c;
     sint32 height, offset_x, offset_y;
     FUNCTION_MARKER(0x80013CACu, "SLUS_005.10");
-    frame = xport_guest_buffer_address(local_frame, sizeof(local_frame));
-    w_u32(frame + 0xB8u, 0u);
-    for (packet = frame + 0x20u; packet < frame + 0x60u; packet += 32u)
+    if (!packets_registered)
     {
-        w_u8(packet + 3u, 3u); w_u8(packet + 7u, 0x60u);
-        w_u8(packet + 4u, 0u); w_u8(packet + 5u, 0u); w_u8(packet + 6u, 0u);
-        if (packet == frame + 0x20u)
+        if (!gpu_register_packet_range(packets, sizeof(packets)) ||
+            !gpu_register_packet_range(&ordering_word, sizeof(ordering_word)))
         {
-            w_u16(packet + 8u, 0u); w_u16(packet + 10u, 119u);
-            w_u16(packet + 12u, 320u); w_u16(packet + 14u, 2u);
+            fprintf(stderr, "V8: cannot register main GPU packets\n");
+            abort();
         }
-        else
-        {
-            w_u16(packet + 8u, 159u); w_u16(packet + 10u, 0u);
-            w_u16(packet + 12u, 2u); w_u16(packet + 14u, 240u);
-        }
-        a = r_u32(packet); b = r_u32(packet + 4u); c = r_u32(packet + 8u); d = r_u32(packet + 12u);
-        w_u32(packet + 16u, a); w_u32(packet + 20u, b); w_u32(packet + 24u, c); w_u32(packet + 28u, d);
+        packets_registered = 1;
+    }
+    for (index = 0u; index < 2u; ++index)
+    {
+        packet = packets + index * 8u;
+        packet[0] = 0x03000000u;
+        packet[1] = 0x60000000u;
+        packet[2] = index == 0u ? 0x00770000u : 159u;
+        packet[3] = index == 0u ? 0x00020140u : 0x00F00002u;
+        memcpy(packet + 4u, packet, 16u);
     }
     SetDefDrawEnv((DRAWENV *)psx_addr(0x8006F208u, 92u), 0, 0, 320, 240);
     SetDefDrawEnv((DRAWENV *)psx_addr(0x8006F264u, 92u), 0, 240, 320, 240);
@@ -1072,32 +1161,32 @@ uint32 sub_80013CAC(void)
 restart:
     overlay = 0u;
     sub_80011834();
-    w_u32(frame + 0xBCu, 120u);
+    quit_countdown = 120u;
     sub_800128D4(); sub_800251FC(64u);
-    if (r_u32(frame + 0xB8u) == 0u)
+    if (restart_flag == 0u)
     {
         module = sub_80011ADC(0x800655D4u);
-        string = xport_guest_call0(r_u32(module + 4u));
+        string = v8_native_module_entry0(module);
         if (string == 0u) string = 0x80065344u;
-        strcpy((char *)psx_addr(frame + 0x60u, 1u), (const char *)psx_addr(string, 1u));
+        strcpy(filename, (const char *)psx_addr(string, 1u));
         sub_80045088(module);
-        if (r_u8(frame + 0x60u) == 0u) return 0u;
+        if ((uint8)filename[0] == 0u) return 0u;
     }
     offset_x = (sint8)r_u8(gp + 0x18u); offset_y = (sint8)r_u8(gp + 0x19u);
-    w_u32(frame + 0xB8u, 0u);
+    restart_flag = 0u;
     w_u16(0x8006F5BCu, (uint16)offset_x); w_u16(0x8006F5A8u, (uint16)offset_x);
     w_u16(0x8006F5BEu, (uint16)offset_y); w_u16(0x8006F5AAu, (uint16)offset_y);
-    sub_80029DEC();
+    v8_native_29DEC();
     mask = 0xE000u;
     for (index = 0u; index < 8u; ++index)
         if (index < 2u || (sint8)r_u8(0x8006567Cu + index - 2u) != 0)
             mask |= 1u << ((uint32)(sint32)(sint8)r_u8(0x80065674u + index) & 31u);
-    sub_800227A4(mask);
+    v8_native_227A4(mask);
     value = sub_80044360(0x800655E4u); w_u32(gp + 0x5F8u, value);
     asset = sub_80015F80(0x800655F4u);
-    sub_800165CC(0u); sub_80017FD4(1u);
+    sub_800165CC(0u); v8_native_17FD4(1u);
     value = sub_80019034(asset, 35u); w_u32(gp + 0x628u, value);
-    sub_8001910C(value); sub_8002A598();
+    (void)v8_native_1910C(value); (void)v8_native_2A598();
     if ((sint8)r_u8(gp + 0x15u) == 5) sub_8001714C(0xBB40E64Du);
     value = r_u8(gp + 0x15u);
     w_u16(0x8006F100u, 0u); w_u16(0x8006EFF8u, 0u); w_u16(0x8006EEF0u, 0u);
@@ -1113,7 +1202,7 @@ restart:
         value2 = r_u8(target + 1u);
     }
     else { string = r_u32(gp + 0x618u) != 0u ? 0x8001029Cu : 0x80065344u; value2 = 0u; }
-    sub_80022BA8(frame + 0x60u, string, value2);
+    v8_native_22BA8(filename, string, value2);
     sub_80012980(); w_u32(gp + 0xCu, 0u); sub_800212C4(0u);
     if ((sint8)r_u8(gp + 0x15u) == 0)
     {
@@ -1122,31 +1211,30 @@ restart:
         do { sub_800126F0(); } while ((r_u32(gp + 0x62Cu) & 0x40u) == 0u);
     }
     first = r_u32(gp + 0x7D0u); second = r_u32(gp + 0x7D4u);
-    w_u32(frame + 0xB4u, 0u); w_u32(frame + 0xB0u, r_u32(first + 0xE0u));
-    if (second != 0u) w_u32(frame + 0xB4u, r_u32(second + 0xE0u));
-    w_u16(frame + 0xA4u, 320u); w_u16(frame + 0xA0u, 0u);
-    w_u16(frame + 0xA2u, 0u); w_u16(frame + 0xA6u, 480u);
-    ClearImage((PSX_RECT *)psx_addr(frame + 0xA0u, 8u), 0u, 0u, 0u);
-    ordering = frame + 0xA8u; w_u32(frame + 0xACu, 0u);
+    second_camera = 0u; first_camera = r_u32(first + 0xE0u);
+    if (second != 0u) second_camera = r_u32(second + 0xE0u);
+    clear_rect.x = 0; clear_rect.y = 0;
+    clear_rect.w = 320; clear_rect.h = 480;
+    ClearImage(&clear_rect, 0u, 0u, 0u);
+    frame_count = 0u;
     w_u32(gp - 0x5350u, 1u); w_u32(gp + 0x624u, 0u);
 next_frame:
-    flags_first = 0u; flags_second = 0u; w_u32(frame + 0xC0u, 0u);
-    value = r_u32(frame + 0xACu) + 1u; w_u32(frame + 0xACu, value);
+    flags_first = 0u; flags_second = 0u; accumulated_flags = 0u;
+    value = frame_count + 1u; frame_count = value;
     if ((value & 7u) == 0u && sub_80043BB4() != 0u && sub_80012A90(r_u32(gp + 0x628u), 0u) != 0u) goto cleanup;
     ticks = 2u;
     if (r_u32(gp + 0x618u) == 0u)
         ticks = r_u32(gp + 0x1Cu) != 0u ? r_u32(gp - 0x5350u) - r_u32(gp + 0xCu) : 1u;
-    w_u32(frame + 0x18u, ticks);
-    for (iteration = 0u; iteration < r_u32(frame + 0x18u); ++iteration)
+    for (iteration = 0u; iteration < ticks; ++iteration)
     {
         sub_800120D4(); value = r_u32(gp + 0xCu) + 1u;
         w_u32(gp + 0xCu, value); w_u16(gp + 0x6CCu, (uint16)value);
-        sub_8002131C(iteration == r_u32(frame + 0x18u) - 1u ? r_u32(frame + 0x18u) : 0u);
+        sub_8002131C(iteration == ticks - 1u ? ticks : 0u);
         sub_80021394(r_u32(gp + 0xCu)); sub_80021678();
         if ((r_u32(0x80065C30u) & 0x800000u) != 0u) view_first = 3u - view_first;
         if (r_u32(gp + 0x7D4u) != 0u && (r_u32(0x80065C48u) & 0x800000u) != 0u) view_second = 3u - view_second;
-        flags_first |= r_u32(gp + 0x62Cu); flags_second = r_u32(frame + 0xC0u) | r_u32(gp + 0x630u);
-        w_u32(frame + 0xC0u, flags_second);
+        flags_first |= r_u32(gp + 0x62Cu); flags_second = accumulated_flags | r_u32(gp + 0x630u);
+        accumulated_flags = flags_second;
     }
     sub_800212C4(r_u16(gp + 0xCu));
     first = r_u32(gp + 0x7D0u); value = r_u32(gp + 8u); a = r_u16(first + 0xCu);
@@ -1167,26 +1255,26 @@ next_frame:
         sub_800119C0(0u);
         second = r_u32(gp + 0x7D4u); value = r_u32(second);
         if ((value & 0x1000000u) == 0u) w_u32(second, value & ~2u);
-        target = r_u32(frame + 0xB0u);
+        target = first_camera;
         if (view_first == 2u)
         {
             first = r_u32(gp + 0x7D0u); target = r_u32(first + 0xF8u); w_u32(first, r_u32(first) | 2u);
         }
-        height = (sint16)r_u16(r_u32(frame + 0xB0u) + 0x8Au); sub_8001DB24(target, height);
+        height = (sint16)r_u16(first_camera + 0x8Au); sub_8001DB24(target, height);
         a = r_u32(0x8006F680u); b = r_u32(0x8006F684u); w_u32(0x8006F6A0u, a); w_u32(0x8006F6A4u, b);
         a = r_u32(0x8006F688u); b = r_u32(0x8006F68Cu); w_u32(0x8006F6A8u, a); w_u32(0x8006F6ACu, b);
         a = r_u32(0x8006F690u); b = r_u32(0x8006F694u); w_u32(0x8006F6B0u, a); w_u32(0x8006F6B4u, b);
         a = r_u32(0x8006F698u); b = r_u32(0x8006F69Cu); w_u32(0x8006F6B8u, a); w_u32(0x8006F6BCu, b);
-        sub_80021600(); ClearOTagR((uint32 *)psx_addr(ordering, 4u), 1);
-        if (sub_80019D10(0x8006EEF0u, r_u32(gp + 0x628u), ordering, r_u32(frame + 0x18u)) != 0u || overlay != 0u)
+        sub_80021600(); ClearOTagR(ordering, 1);
+        if (v8_native_19D10(0x8006EEF0u, r_u32(gp + 0x628u), ordering, ticks) != 0u || overlay != 0u)
         {
-            if (overlay != 0u) sub_80018F7C(overlay, ordering);
-            value = r_u32(ordering); packet = frame + 32u * r_u32(gp + 0x10u) + 16u * r_u32(gp + 8u);
-            w_u32(ordering, packet & 0xFFFFFFu); w_u32(packet, ((uint32)r_u8(packet + 3u) << 24) | value);
+            if (overlay != 0u) v8_native_18F7C(overlay, ordering);
+            packet = packets + 8u * (r_u32(gp + 0x10u) - 1u) + 4u * r_u32(gp + 8u);
+            AddPrim(ordering, packet);
             target = 0x8006F224u + 92u * (1u - r_u32(gp + 8u));
             SetDrawEnv(psx_addr(target, 64u), (DRAWENV *)psx_addr(0x8006F208u + 92u * (1u - r_u32(gp + 8u)), 92u));
-            value = r_u32(ordering); target = 0x8006F224u + 92u * (1u - r_u32(gp + 8u));
-            w_u32(ordering, target & 0xFFFFFFu); w_u32(target, ((uint32)r_u8(target + 3u) << 24) | value);
+            target = 0x8006F224u + 92u * (1u - r_u32(gp + 8u));
+            AddPrim(ordering, psx_addr(target, 4u));
         }
         else if (r_u32(gp + 0x624u) != 0u && (sint16)r_u16(0x8006EEF0u) == 0 && (sint16)r_u16(0x8006EFF8u) == 0 && (sint16)r_u16(0x8006F100u) == 0)
         {
@@ -1198,31 +1286,31 @@ next_frame:
             }
             overlay = sub_8001392C(r_u32(gp + 0x628u));
         }
-        if (view_second != 0u) sub_8002AF98(r_u32(gp + 0x7D4u), (r_u32(gp + 0x10u) << 1) | 1u, ordering);
-        sub_8002B7BC(r_u32(gp + 0x7D4u), 0x8006F6C0u, ordering);
-        sub_80019D10(0x8006F100u, r_u32(gp + 0x628u), ordering, r_u32(frame + 0x18u)); DrawSync(0);
+        if (view_second != 0u) v8_native_2AF98(r_u32(gp + 0x7D4u), (r_u32(gp + 0x10u) << 1) | 1u, ordering);
+        v8_native_2B7BC(r_u32(gp + 0x7D4u), 0x8006F6C0u, ordering);
+        v8_native_19D10(0x8006F100u, r_u32(gp + 0x628u), ordering, ticks); DrawSync(0);
         target = 0x8006F208u + 92u * ((r_u32(gp + 0x10u) << 2) - (r_u32(gp + 8u) - 1u));
-        sub_8002A25C((sint16)r_u16(target), (sint16)r_u16(target + 2u), ordering);
-        sub_80012828(0x8006F5A0u + 20u * r_u32(gp + 8u), 0x8006F150u + 92u * (4u * r_u32(gp + 0x10u) + r_u32(gp + 8u)), ordering, r_u32(gp + 0x60Cu) + 0x3FFCu);
+        v8_native_2A25C((sint16)r_u16(target), (sint16)r_u16(target + 2u), ordering);
+        v8_native_12828(0x8006F5A0u + 20u * r_u32(gp + 8u), 0x8006F150u + 92u * (4u * r_u32(gp + 0x10u) + r_u32(gp + 8u)), ordering, r_u32(gp + 0x60Cu) + 0x3FFCu);
         sub_800119C0(1u);
         first = r_u32(gp + 0x7D0u); value = r_u32(first); if ((value & 0x1000000u) == 0u) w_u32(first, value & ~2u);
-        target = r_u32(frame + 0xB4u);
+        target = second_camera;
         if (view_second == 2u) { second = r_u32(gp + 0x7D4u); target = r_u32(second + 0xF8u); w_u32(second, r_u32(second) | 2u); }
-        height = (sint16)r_u16(r_u32(frame + 0xB4u) + 0x8Au); sub_8001DB24(target, height);
+        height = (sint16)r_u16(second_camera + 0x8Au); sub_8001DB24(target, height);
         a = r_u32(0x8006F680u); b = r_u32(0x8006F684u); w_u32(0x8006F6C0u, a); w_u32(0x8006F6C4u, b);
         a = r_u32(0x8006F688u); b = r_u32(0x8006F68Cu); w_u32(0x8006F6C8u, a); w_u32(0x8006F6CCu, b);
         a = r_u32(0x8006F690u); b = r_u32(0x8006F694u); w_u32(0x8006F6D0u, a); w_u32(0x8006F6D4u, b);
         a = r_u32(0x8006F698u); b = r_u32(0x8006F69Cu); w_u32(0x8006F6D8u, a); w_u32(0x8006F6DCu, b);
-        sub_80021600(); ClearOTagR((uint32 *)psx_addr(ordering, 4u), 1);
-        if (view_first != 0u) sub_8002AF98(r_u32(gp + 0x7D0u), 2u * r_u32(gp + 0x10u), ordering);
-        sub_8002B7BC(r_u32(gp + 0x7D0u), 0x8006F6A0u, ordering);
-        sub_80019D10(0x8006EFF8u, r_u32(gp + 0x628u), ordering, r_u32(frame + 0x18u));
+        sub_80021600(); ClearOTagR(ordering, 1);
+        if (view_first != 0u) v8_native_2AF98(r_u32(gp + 0x7D0u), 2u * r_u32(gp + 0x10u), ordering);
+        v8_native_2B7BC(r_u32(gp + 0x7D0u), 0x8006F6A0u, ordering);
+        v8_native_19D10(0x8006EFF8u, r_u32(gp + 0x628u), ordering, ticks);
         sub_800128BC(); DrawSync(0);
         target = 0x8006F208u + 92u * (4u * r_u32(gp + 0x10u) + r_u32(gp + 8u) - 2u);
-        sub_8002A25C((sint16)r_u16(target), (sint16)r_u16(target + 2u), ordering);
-        DrawOTag((uint32 *)psx_addr(ordering, 4u)); DrawSync(0);
+        v8_native_2A25C((sint16)r_u16(target), (sint16)r_u16(target + 2u), ordering);
+        DrawOTag(ordering); DrawSync(0);
         if ((sint16)r_u16(0x80065C28u) < 2) flags_first |= 0x8000000u;
-        if ((sint16)r_u16(0x80065C40u) < 2) w_u32(frame + 0xC0u, r_u32(frame + 0xC0u) | 0x8000000u);
+        if ((sint16)r_u16(0x80065C40u) < 2) accumulated_flags = accumulated_flags | 0x8000000u;
         PutDrawEnv((DRAWENV *)psx_addr(0x8006F208u + 92u * (4u * r_u32(gp + 0x10u) + r_u32(gp + 8u)), 92u));
         DrawOTag((uint32 *)psx_addr(r_u32(gp + 0x60Cu) + 0x3FFCu, 4u));
     }
@@ -1239,27 +1327,27 @@ next_frame:
         { value = r_u32(selected); if ((value & 0x1000000u) == 0u) w_u32(selected, value & ~2u); target = r_u32(selected + 0xE0u); height = (sint16)r_u16(target + 0x8Au); }
         sub_8001DB24(target, height); sub_800119C0(r_u32(gp + 8u)); sub_8001D994(320u, 240u, 160u, 120u); sub_80021600();
         if (selected_view == 2u && (r_u32(selected) & 0x20000000u) == 0u) sub_8002B8D0(selected);
-        ClearOTagR((uint32 *)psx_addr(ordering, 4u), 1);
+        ClearOTagR(ordering, 1);
         value = r_u32(gp + 0x680u);
         if (value != 0u)
         {
-            a = r_u32(0x8006EEE4u); value2 = r_u32(ordering); b = r_u8(0x8006EEDBu);
-            w_u32(ordering, 0x8006EED8u & 0xFFFFFFu); w_u32(0x8006EEE4u, (a & 0xFF000000u) | value);
+            a = r_u32(0x8006EEE4u); value2 = *ordering; b = r_u8(0x8006EEDBu);
+            *ordering = 0x8006EED8u & 0xFFFFFFu; w_u32(0x8006EEE4u, (a & 0xFF000000u) | value);
             w_u32(0x8006EED8u, (b << 24) | value2);
         }
         w_u32(gp + 0x680u, 0u);
-        if (selected_view != 0u) sub_8002AF98(selected, 2u - selected_view, ordering);
-        sub_8002B7BC(selected, 0x8006F680u, ordering);
+        if (selected_view != 0u) v8_native_2AF98(selected, 2u - selected_view, ordering);
+        v8_native_2B7BC(selected, 0x8006F680u, ordering);
         if (r_u32(gp + 0x618u) != 0u)
         {
             if ((r_u32(gp + 0xCu) & 0x3Fu) < 0x28u)
             {
                 w_u8(r_u32(gp + 0x628u) + 4u, 0x80u); w_u8(r_u32(gp + 0x628u) + 5u, 0x80u); w_u8(r_u32(gp + 0x628u) + 6u, 0u);
-                sub_80019C64(r_u32(gp + 0x628u), 0x8006560Cu, 0x80065618u, 10u, ordering);
+                v8_native_19C64(r_u32(gp + 0x628u), 0x8006560Cu, 0x80065618u, 10u, ordering);
             }
         }
-        else sub_80019D10(0x8006EEF0u, r_u32(gp + 0x628u), ordering, r_u32(frame + 0x18u));
-        if (overlay != 0u) sub_80018F7C(overlay, ordering);
+        else v8_native_19D10(0x8006EEF0u, r_u32(gp + 0x628u), ordering, ticks);
+        if (overlay != 0u) v8_native_18F7C(overlay, ordering);
         else if (r_u32(gp + 0x624u) != 0u && (sint16)r_u16(0x8006EEF0u) == 0)
         {
             if (r_u32(gp + 0x5ACu) == 4u)
@@ -1270,31 +1358,31 @@ next_frame:
         }
         sub_800128BC(); DrawSync(0);
         target = 0x8006F208u + 92u * (1u - r_u32(gp + 4u));
-        sub_8002A25C(0, (sint16)r_u16(target + 2u), ordering);
+        v8_native_2A25C(0, (sint16)r_u16(target + 2u), ordering);
         if ((sint16)r_u16(0x80065C28u) < 2) flags_first |= 0x8000000u;
-        sub_80012828(0x8006F5A0u + 20u * r_u32(gp + 8u), 0x8006F208u + 92u * r_u32(gp + 4u), ordering, r_u32(gp + 0x60Cu) + 0x3FFCu);
+        v8_native_12828(0x8006F5A0u + 20u * r_u32(gp + 8u), 0x8006F208u + 92u * r_u32(gp + 4u), ordering, r_u32(gp + 0x60Cu) + 0x3FFCu);
     }
     if (overlay != 0u)
     {
-        value = r_u32(gp + 0x624u) + r_u32(frame + 0x18u); w_u32(gp + 0x624u, value);
+        value = r_u32(gp + 0x624u) + ticks; w_u32(gp + 0x624u, value);
         if ((sint32)value >= 301)
         {
             if ((sint8)r_u8(gp + 0x15u) == 0)
             { if ((flags_first & 0x8400000u) != 0u || (r_u32(gp + 0x24u) == 0u && (sint32)value >= 1201)) goto cleanup; }
             else
             {
-                value2 = flags_first | r_u32(frame + 0xC0u);
+                value2 = flags_first | accumulated_flags;
                 if ((value2 & 0x8600000u) != 0u || (sint32)value >= 1201)
-                { w_u32(frame + 0xB8u, value2 & 0x200000u); goto cleanup; }
+                { restart_flag = value2 & 0x200000u; goto cleanup; }
             }
         }
     }
-    value = flags_first | r_u32(frame + 0xC0u);
+    value = flags_first | accumulated_flags;
     if ((value & 0x100u) != 0u)
     {
         if ((value & 0x800u) != 0u)
-        { value2 = r_u32(frame + 0xBCu) - r_u32(frame + 0x18u); w_u32(frame + 0xBCu, value2); if ((sint32)value2 < 0) goto quit; }
-        else w_u32(frame + 0xBCu, 120u);
+        { value2 = quit_countdown - ticks; quit_countdown = value2; if ((sint32)value2 < 0) goto quit; }
+        else quit_countdown = 120u;
         goto next_frame;
     }
     if ((value & 0x8000000u) == 0u) goto next_frame;
@@ -1311,8 +1399,8 @@ cleanup:
         w_u8(gp + 0x14u, (uint8)value); sub_80011C58(0x80065968u); sub_800126C8();
     }
     sub_800128BC(); sub_80044054(); sub_80044394(r_u32(gp + 0x5F8u)); sub_80022A1C();
-    sub_800204DC(r_u32(frame + 0xB0u));
-    if (r_u32(gp + 0x7D4u) != 0u) sub_800204DC(r_u32(frame + 0xB4u));
+    sub_800204DC(first_camera);
+    if (r_u32(gp + 0x7D4u) != 0u) sub_800204DC(second_camera);
     sub_8002ACCC(); sub_80041E80(); sub_8001356C(r_u32(gp + 0x628u)); sub_800190D8(r_u32(gp + 0x628u));
     sub_80011914(0u); sub_80011914(1u); sub_80016678(0u);
     goto restart;
@@ -1332,7 +1420,7 @@ sint32 sub_80043EF0(void)
     uint32 address = 0x800A3007u;
     FUNCTION_MARKER(0x80043EF0u, "SLUS_005.10");
     sub_80045354();
-    SpuInitMalloc(16u, 0x800A3008u);
+    SpuInitMalloc(16, (char *)psx_addr(0x800A3008u, 17u * 8u));
     do
     {
         w_u8(address, (uint32)index);
@@ -1368,9 +1456,15 @@ sint32 sub_80043EF0(void)
 
 uint32 sub_80045354(void)
 {
+    const SpuNativeTransferGuestBinding binding = {
+        0x8005ED64u, 0x8005EDF0u, 0x8005EDECu, 0x8005EE08u,
+        0x8005EE0Cu, 0x8005EE28u, 0x8005EE2Cu, 3u
+    };
     uint32 result;
     FUNCTION_MARKER(0x80045354u, "SLUS_005.10");
     result = _SpuInit(0u);
+    if (!spu_bind_native_transfer_guest(&binding))
+        abort();
     return result;
 }
 
@@ -1423,6 +1517,7 @@ uint32 sub_80048120(uint32 incoming_v0, uint32 slot, uint32 guest_callback);
 sint32 sub_80049534(uint32 position);
 uint32 sub_80011F0C(void);
 uint32 PadInitDirectPSX(uint32 first_packet, uint32 second_packet);
+uint32 v8_native_pad_init_direct(uint32 first_packet, uint32 second_packet);
 uint32 PadStartComPSX(void);
 uint32 VSyncCallbackPSX(uint32 guest_callback);
 
@@ -1565,23 +1660,42 @@ uint32 sub_80015948(uint32 path)
     return sub_80045134(allocation, r_u32(entry + 16u));
 }
 
-uint32 sub_800157D4(uint32 path)
+static sint32 v8_native_component_compare(uint32 first, const uint8 *second, uint32 count)
+{
+    for (;;)
+    {
+        uint32 left = r_u8(first);
+        uint32 right = *second;
+        first += 1u;
+        if (left != right)
+        {
+            first -= 1u;
+            left = r_u8(first);
+            right = *second;
+            return (sint32)(left - right);
+        }
+        count -= 1u;
+        second += 1;
+        if ((sint32)count <= 0)
+            return 0;
+    }
+}
+
+uint32 v8_native_find_file(const char *path)
 {
     uint8 component[12];
     uint32 directory;
-    uint32 cursor = path;
+    const uint8 *cursor = (const uint8 *)path;
     uint32 length;
     uint32 character;
-    uint32 guest_component;
     uint32 index;
     uint32 offset;
     uint32 entry;
     uint32 count;
-    FUNCTION_MARKER(0x800157D4u, "SLUS_005.10");
-    character = r_u8(cursor);
+    character = *cursor;
     directory = r_u32(0x800659B8u);
     if (character == 0x5Cu)
-        cursor += 1u;
+        cursor += 1;
     if (directory == 0u)
         return 0u;
     for (;;)
@@ -1589,8 +1703,8 @@ uint32 sub_800157D4(uint32 path)
         length = 0u;
         do
         {
-            character = r_u8(cursor);
-            cursor += 1u;
+            character = *cursor;
+            cursor += 1;
             if (character >= 0x61u)
                 character -= 32u;
             if (character == 0u || character == 0x5Cu)
@@ -1600,13 +1714,12 @@ uint32 sub_800157D4(uint32 path)
         } while (length < 12u);
         while (length < 12u)
             component[length++] = 0x20u;
-        guest_component = xport_guest_buffer_address(component, sizeof(component));
         if (character == 0x5Cu)
         {
             directory = r_u32(directory + 8u);
             while (directory != 0u)
             {
-                if (sub_80052384(directory, guest_component, 8) == 0)
+                if (v8_native_component_compare(directory, component, 8u) == 0)
                     break;
                 directory = r_u32(directory + 12u);
             }
@@ -1623,7 +1736,7 @@ uint32 sub_800157D4(uint32 path)
             do
             {
                 entry = directory + offset;
-                count = (uint32)sub_80052384(entry, guest_component, 12);
+                count = (uint32)v8_native_component_compare(entry, component, 12u);
                 index += 1u;
                 if (count == 0u)
                     return entry;
@@ -1633,6 +1746,12 @@ uint32 sub_800157D4(uint32 path)
             return 0u;
         }
     }
+}
+
+uint32 sub_800157D4(uint32 path)
+{
+    FUNCTION_MARKER(0x800157D4u, "SLUS_005.10");
+    return v8_native_find_file((const char *)xport_guest_cptr(path, 1u));
 }
 
 sint32 sub_80052384(uint32 first, uint32 second, uint32 count)
@@ -1722,14 +1841,11 @@ uint32 sub_800251FC(uint32 mode)
     return 0u;
 }
 
-uint32 sub_80011ADC(uint32 path)
+static uint32 v8_native_relocate_module(uint32 base)
 {
-    uint32 base;
     uint32 cursor;
     uint32 relocation;
     uint32 instruction_base;
-    FUNCTION_MARKER(0x80011ADCu, "SLUS_005.10");
-    base = sub_80015948(path);
     if (base == 0u)
         return base;
     cursor = base + r_u32(base);
@@ -1765,6 +1881,28 @@ uint32 sub_80011ADC(uint32 path)
     return base;
 }
 
+uint32 sub_80011ADC(uint32 path)
+{
+    FUNCTION_MARKER(0x80011ADCu, "SLUS_005.10");
+    return v8_native_relocate_module(sub_80015948(path));
+}
+
+uint32 v8_native_11ADC_host(const char *path)
+{
+    uint32 entry, rounded, allocation, sector, sectors;
+    entry = v8_native_find_file(path);
+    if (entry == 0u)
+        return 0u;
+    rounded = (r_u32(entry + 16u) + 2047u) & 0xFFFFF800u;
+    allocation = sub_800116F4(rounded);
+    sectors = r_u32(entry + 16u);
+    sector = r_u32(entry + 12u);
+    sectors = (sectors + 2047u) >> 11;
+    (void)sub_800154F4((uint8 *)psx_addr(allocation, rounded), (sint32)sector, (sint32)sectors);
+    allocation = sub_80045134(allocation, r_u32(entry + 16u));
+    return v8_native_relocate_module(allocation);
+}
+
 void sub_8001D994(uint32 first, uint32 second, uint32 x, uint32 y)
 {
     FUNCTION_MARKER(0x8001D994u, "SLUS_005.10");
@@ -1783,7 +1921,7 @@ uint32 sub_80011F0C(void)
 {
     uint32 page, value, address;
     FUNCTION_MARKER(0x80011F0Cu, "SLUS_005.10");
-    PadInitDirectPSX(0x80066458u, 0x8006647Au);
+    (void)v8_native_pad_init_direct(0x80066458u, 0x8006647Au);
     PadStartComPSX();
     VSyncCallbackPSX(0x80011CCCu);
     for (page = 0u; page < 4u; ++page)
@@ -1862,4 +2000,348 @@ uint32 sub_80048120(uint32 incoming_v0, uint32 slot, uint32 guest_callback)
     target = r_u32(incoming_v0 + 0x14u);
     result = (uint32)xport_guest_call2(target, slot, guest_callback);
     return result;
+}
+
+
+static uint32 v8_sdk_timer_count(uint32 address)
+{
+    PsxTimerState state;
+
+    if ((address & 0x1FFFFFFFu) == 0x1F801110u)
+    {
+        psx_timers_export(&state);
+        return state.counter[1];
+    }
+    return r_u32(address);
+}
+
+static sint32 v8_sdk_vsync_counter(void)
+{
+    uint32 gpu_status;
+    uint32 timer;
+    uint32 previous;
+    uint32 current;
+
+    gpu_status = r_u32(0x8005EE7Cu);
+    timer = r_u32(0x8005EE80u);
+    if ((gpu_status & 0x1FFFFFFFu) == 0x1F801814u)
+        xport_gpu_status_read_missing(gpu_status);
+    else
+        (void)r_u32(gpu_status);
+    do
+    {
+        previous = v8_sdk_timer_count(timer);
+        current = v8_sdk_timer_count(timer);
+    } while (previous != current);
+    (void)r_u32(0x8005EE84u);
+    return (sint32)r_u32(0x8005FFB4u);
+}
+
+static uint32 v8_sdk_cd_read(uint32 address)
+{
+    uint32 physical = address & 0x1FFFFFFFu;
+    if (physical >= 0x1F801800u && physical <= 0x1F801803u)
+        return xport_cd_controller_read_missing(address, 1u);
+    return r_u8(address);
+}
+
+static void v8_sdk_cd_write(uint32 address, uint32 value)
+{
+    uint32 physical = address & 0x1FFFFFFFu;
+    if (physical >= 0x1F801800u && physical <= 0x1F801803u)
+        xport_cd_controller_write_missing(address, 1u, value & 0xFFu);
+    else
+        w_u8(address, (uint8)value);
+}
+
+static sint32 v8_sdk_cd_timeout_check(void)
+{
+    uint32 previous;
+    uint32 ready;
+    uint32 sync;
+    uint32 command;
+    uint32 context;
+    sint32 current;
+    sint32 expired;
+
+    current = v8_sdk_vsync_counter();
+    expired = (sint32)r_u32(0x800A3258u) < current;
+    if (!expired)
+    {
+        previous = r_u32(0x800A325Cu);
+        w_u32(0x800A325Cu, previous + 1u);
+        expired = (sint32)previous > 0x003C0000;
+    }
+    if (!expired)
+        return 0;
+    puts((const char *)psx_addr(0x80010FC0u, 1u));
+    sync = r_u8(0x8006035Cu);
+    ready = r_u8(0x8006035Du);
+    context = r_u32(0x800A3260u);
+    ready = r_u32(0x80060124u + ready * 4u);
+    command = r_u8(0x8006009Du);
+    command = r_u32(0x800600A4u + command * 4u);
+    sync = r_u32(0x80060124u + sync * 4u);
+    printf((const char *)psx_addr(0x80010FD0u, 1u),
+        (const char *)psx_addr(context, 1u),
+        (const char *)psx_addr(command, 1u),
+        (const char *)psx_addr(sync, 1u),
+        (const char *)psx_addr(ready, 1u));
+    v8_sdk_cd_timeout_reset();
+    return -1;
+}
+
+static void v8_sdk_cd_poll_callbacks(void)
+{
+    uint32 index;
+    uint32 events;
+    uint32 callback;
+
+    if (v8_sdk_bios_irq_enabled() == 0u)
+        return;
+    index = v8_sdk_cd_read(r_u32(0x80060344u)) & 3u;
+    for (;;)
+    {
+        events = (uint32)sub_800495B4();
+        if (events == 0u)
+            break;
+        if ((events & 4u) != 0u)
+        {
+            callback = r_u32(0x80060080u);
+            if (callback != 0u)
+                xport_guest_call2(callback, r_u8(0x8006035Du), 0x800A3248u);
+        }
+        if ((events & 2u) != 0u)
+        {
+            callback = r_u32(0x8006007Cu);
+            if (callback != 0u)
+                xport_guest_call2(callback, r_u8(0x8006035Cu), 0x800A3240u);
+        }
+    }
+    v8_sdk_cd_write(r_u32(0x80060344u), index);
+}
+
+static sint32 v8_sdk_cd_command_null(uint32 command, uint32 asynchronous)
+{
+    uint32 table_offset;
+    uint32 parameter_index;
+    uint32 port;
+    uint32 completion;
+
+    command &= 0xFFu;
+    table_offset = command * 4u;
+    if ((sint32)r_u32(0x80060088u) >= 2)
+        printf((const char *)psx_addr(0x8001105Cu, 1u),
+            (const char *)psx_addr(r_u32(0x800600A4u + table_offset), 1u));
+    if (r_u32(0x800602C4u + table_offset) != 0u)
+    {
+        if ((sint32)r_u32(0x80060088u) > 0)
+            printf((const char *)psx_addr(0x80011064u, 1u),
+                (const char *)psx_addr(r_u32(0x800600A4u + table_offset), 1u));
+        return -2;
+    }
+    v8_sdk_cd_sync(0u, 0u);
+    w_u8(0x8006035Cu, 0u);
+    if (r_u32(0x800601C4u + table_offset) != 0u)
+        w_u8(0x8006035Du, 0u);
+    v8_sdk_cd_write(r_u32(0x80060344u), 0u);
+    if ((sint32)r_u32(0x800602C4u + table_offset) > 0)
+    {
+        parameter_index = 0u;
+        do
+        {
+            port = r_u32(0x8006034Cu);
+            v8_sdk_cd_write(port, r_u8(parameter_index));
+            ++parameter_index;
+        } while ((sint32)parameter_index < (sint32)r_u32(0x800602C4u + table_offset));
+    }
+    port = r_u32(0x80060348u);
+    w_u8(0x8006009Du, (uint8)command);
+    v8_sdk_cd_write(port, command);
+    if (asynchronous != 0u)
+        return 0;
+    w_u32(0x800A3258u, (uint32)v8_sdk_vsync_counter() + 960u);
+    w_u32(0x800A325Cu, 0u);
+    completion = r_u8(0x8006035Cu);
+    w_u32(0x800A3260u, 0x80011074u);
+    while (completion == 0u)
+    {
+        if (v8_sdk_cd_timeout_check() != 0)
+            return -1;
+        v8_sdk_cd_poll_callbacks();
+        completion = r_u8(0x8006035Cu);
+    }
+    return r_u8(0x8006035Cu) == 5u ? -1 : 0;
+}
+
+static sint32 v8_sdk_cd_pause_async(void)
+{
+    uint32 previous_callback;
+    uint32 attempts;
+
+    previous_callback = r_u32(0x8006007Cu);
+    attempts = 3u;
+    for (;;)
+    {
+        w_u32(0x8006007Cu, 0u);
+        if ((r_u8(0x8006008Cu) & 0x10u) != 0u)
+            v8_sdk_cd_command_null(1u, 0u);
+        w_u32(0x8006007Cu, previous_callback);
+        if (v8_sdk_cd_command_null(9u, 1u) == 0)
+            return 1;
+        --attempts;
+        if (attempts == 0xFFFFFFFFu)
+        {
+            w_u32(0x8006007Cu, previous_callback);
+            return 0;
+        }
+    }
+}
+
+static void v8_sdk_cd_write32(uint32 address, uint32 value)
+{
+    if ((address & 0x1FFFFFFFu) == 0x1F801020u)
+        xport_memory_control_write32_missing(address, value);
+    else
+        w_u32(address, value);
+}
+
+static uint32 v8_sdk_cd_sync(uint32 mode, uint32 result_guest)
+{
+    uint32 now, deadline, counter, sync_status, ready_status, context, command, ready_text, command_text, sync_text;
+    uint32 port, saved_index, events, callback, value, source, destination, remaining;
+    now = (uint32)v8_sdk_vsync_counter();
+    w_u32(0x800A3258u, now + 960u);
+    w_u32(0x800A325Cu, 0u);
+    w_u32(0x800A3260u, 0x80011048u);
+    do
+    {
+        now = (uint32)v8_sdk_vsync_counter();
+        deadline = r_u32(0x800A3258u);
+        value = (uint32)((sint32)deadline < (sint32)now);
+        if (value == 0u)
+        {
+            counter = r_u32(0x800A325Cu);
+            w_u32(0x800A325Cu, counter + 1u);
+            value = (uint32)((sint32)counter > 0x003C0000);
+        }
+        if (value != 0u)
+        {
+            (void)puts((const char *)psx_addr(0x80010FC0u, 1u));
+            sync_status = r_u8(0x8006035Cu);
+            ready_status = r_u8(0x8006035Du);
+            context = r_u32(0x800A3260u);
+            ready_text = r_u32(0x80060124u + 4u * ready_status);
+            command = r_u8(0x8006009Du);
+            command_text = r_u32(0x800600A4u + 4u * command);
+            sync_text = r_u32(0x80060124u + 4u * sync_status);
+            (void)printf((const char *)psx_addr(0x80010FD0u, 1u), (const char *)psx_addr(context, 1u), (const char *)psx_addr(command_text, 1u), (const char *)psx_addr(sync_text, 1u), (const char *)psx_addr(ready_text, 1u));
+            v8_sdk_cd_timeout_reset();
+            return 0xFFFFFFFFu;
+        }
+        if (v8_sdk_bios_irq_enabled() != 0u)
+        {
+            port = r_u32(0x80060344u);
+            saved_index = v8_sdk_cd_read(port) & 3u;
+            for (;;)
+            {
+                events = sub_800495B4();
+                if (events == 0u) break;
+                if ((events & 4u) != 0u)
+                {
+                    callback = r_u32(0x80060080u);
+                    if (callback != 0u)
+                    {
+                        value = r_u8(0x8006035Du);
+                        (void)xport_guest_call2(callback, value, 0x800A3248u);
+                    }
+                }
+                if ((events & 2u) != 0u)
+                {
+                    callback = r_u32(0x8006007Cu);
+                    if (callback != 0u)
+                    {
+                        value = r_u8(0x8006035Cu);
+                        (void)xport_guest_call2(callback, value, 0x800A3240u);
+                    }
+                }
+            }
+            port = r_u32(0x80060344u);
+            v8_sdk_cd_write(port, saved_index);
+        }
+        sync_status = r_u8(0x8006035Cu);
+        if (sync_status == 2u || sync_status == 5u)
+        {
+            w_u8(0x8006035Cu, 2u);
+            source = 0x800A3240u; destination = result_guest; remaining = 7u;
+            if (destination != 0u)
+                do
+                {
+                    value = r_u8(source);
+                    source += 1u; remaining -= 1u;
+                    w_u8(destination, value);
+                    destination += 1u;
+                } while (remaining != 0xFFFFFFFFu);
+            return sync_status;
+        }
+    } while (mode == 0u);
+    return 0u;
+}
+
+static void v8_sdk_cd_timeout_reset(void)
+{
+    uint32 port, flags, value;
+    port = r_u32(0x80060344u);
+    v8_sdk_cd_write(port, 1u);
+    port = r_u32(0x80060350u);
+    flags = v8_sdk_cd_read(port) & 7u;
+    if (flags != 0u)
+        do
+        {
+            port = r_u32(0x80060344u);
+            v8_sdk_cd_write(port, 1u);
+            port = r_u32(0x80060350u);
+            v8_sdk_cd_write(port, 7u);
+            port = r_u32(0x8006034Cu);
+            v8_sdk_cd_write(port, 7u);
+            port = r_u32(0x80060350u);
+            flags = v8_sdk_cd_read(port) & 7u;
+        } while (flags != 0u);
+    w_u8(0x8006035Eu, 0u);
+    value = r_u8(0x8006035Eu);
+    w_u8(0x8006035Du, value);
+    port = r_u32(0x80060344u);
+    w_u8(0x8006035Cu, 2u);
+    v8_sdk_cd_write(port, 0u);
+    port = r_u32(0x80060350u);
+    v8_sdk_cd_write(port, 0u);
+    port = r_u32(0x80060354u);
+    v8_sdk_cd_write32(port, 0x1325u);
+}
+
+static uint32 v8_sdk_bios_irq_enabled(void)
+{
+    return r_u16(0x8005EEEEu);
+}
+
+static sint32 v8_sdk_cd_sector_sync_host(void *destination, uint32 word_count)
+{
+    return CdGetSector(destination, (sint32)word_count) == 0;
+}
+
+static sint32 v8_sdk_cd_sector_async_host(void *destination, uint32 word_count)
+{
+    return CdGetSector(destination, (sint32)word_count) == 0;
+}
+
+static sint32 v8_sdk_cd_position_host(const uint8 *position)
+{
+    uint32 minute, second, frame;
+    minute = position[0];
+    second = position[1];
+    minute = 10u * (minute >> 4) + (minute & 15u);
+    second = 10u * (second >> 4) + (second & 15u);
+    frame = position[2];
+    frame = 10u * (frame >> 4) + (frame & 15u);
+    return (sint32)(75u * (60u * minute + second) + frame) - 150;
 }
