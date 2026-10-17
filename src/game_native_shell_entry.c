@@ -16,7 +16,7 @@ uint32 sub_80016678(uint32);
 uint32 sub_80011BE4(uint32);
 uint32 sub_80011C58(uint32);
 uint32 sub_80011834(void);
-void sub_8001AA38(uint32);
+uint32 sub_8001AA38(uint32);
 void sub_80045088(uint32);
 void sub_80044394(uint32);
 void v8_native_44394(uint32 sound);

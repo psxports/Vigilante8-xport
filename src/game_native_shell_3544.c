@@ -39,7 +39,7 @@ uint32 sub_8004445C(uint32,uint32,uint32);
 uint32 sub_8001A4AC(uint32,uint32);
 uint32 sub_800183EC(uint32,uint32);
 uint32 sub_8001AF48(uint32,uint32);
-void sub_8001AA38(uint32);
+uint32 sub_8001AA38(uint32);
 
 static uint32 shell3544_table(uint32 character)
 {

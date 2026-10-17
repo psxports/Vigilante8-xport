@@ -31,7 +31,7 @@ uint32 sub_80011A10(void);
 uint32 v8_native_1DE08(uint32);
 uint32 sub_800120D4(void);
 uint32 sub_8001AF48(uint32,uint32);
-void sub_8001D490(uint32);
+uint32 sub_8001D490(uint32);
 void sub_80045088(uint32);
 uint32 sub_800119C0(uint32);
 uint32 v8_native_1D9C0(const MATRIX *,uint32);
@@ -84,7 +84,7 @@ uint32 sub_80015A00(void);
 uint32 sub_800225D4(uint32 *header,uint32 *remaining);
 uint32 sub_8002263C(uint32 bytes,uint32 prepare);
 void sub_80045088(uint32 address);
-void sub_8001AA38(uint32 object);
+uint32 sub_8001AA38(uint32 object);
 void sub_8001A0AC(uint32 rectangle,uint32 color);
 
 void v8_native_shell_223C(uint32 base)

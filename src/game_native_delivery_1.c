@@ -44,14 +44,21 @@ uint32 sub_8001D4F0(uint32 parent, uint32 child)
 
 uint32 sub_8001B2FC(uint32 parent, uint32 descriptor, uint32 node)
 {
-    uint32 packed;
-    uint16 angle;
-    uint32 x, y, z;
-
+    uint32 packed, angle, address, offset, x, y, z;
     FUNCTION_MARKER(0x8001B2FCu, "SLUS_005.10");
-    packed = r_u32(descriptor + 16u);
-    angle = r_u16(descriptor + 20u);
-    w_u32(node + 64u, packed);
+    address = descriptor + 19u;
+    offset = address & 3u;
+    packed = r_u32(address & ~3u) << (8u * (3u - offset));
+    address = descriptor + 16u;
+    offset = address & 3u;
+    packed = (packed & (offset == 0u ? 0u : 0xFFFFFFFFu << (8u * (4u - offset)))) | (r_u32(address & ~3u) >> (8u * offset));
+    angle = (uint32)(sint32)(sint16)r_u16(descriptor + 20u);
+    address = node + 67u;
+    offset = address & 3u;
+    w_masked_u32(address & ~3u, packed >> (8u * (3u - offset)), (1u << (offset + 1u)) - 1u);
+    address = node + 64u;
+    offset = address & 3u;
+    w_masked_u32(address & ~3u, packed << (8u * offset), (15u << offset) & 15u);
     w_u16(node + 68u, angle);
     x = r_u32(descriptor + 4u);
     y = r_u32(descriptor + 8u);
@@ -59,7 +66,7 @@ uint32 sub_8001B2FC(uint32 parent, uint32 descriptor, uint32 node)
     w_u32(node + 72u, x);
     w_u32(node + 76u, y);
     w_u32(node + 80u, z);
-    sub_8001D708(node);
+    (void)sub_8001D708(node);
     return sub_8001D4F0(parent, node);
 }
 
@@ -116,10 +123,30 @@ void v8_native_43408(uint32 matrix, uint32 vector, uint32 *destination)
 
 uint32 sub_80043408(uint32 matrix, uint32 vector, uint32 destination)
 {
-    uint32 output[3], i;
-    v8_native_43408(matrix, vector, output);
+    uint32 words[5], values[3], translation[3], high[3], low[3], i;
+    FUNCTION_MARKER(0x80043408u, "SLUS_005.10");
+    for (i = 0u; i < 5u; ++i)
+        words[i] = r_u32(matrix + 4u * i);
+    for (i = 0u; i < 5u; ++i)
+        xport_gte_write_control(i, words[i]);
     for (i = 0u; i < 3u; ++i)
-        w_u32(destination + 4u * i, output[i]);
+        values[i] = r_u32(vector + 4u * i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, (uint32)((sint32)values[i] >> 15));
+    xport_gte_execute(0x0041E012u);
+    for (i = 0u; i < 3u; ++i)
+        translation[i] = r_u32(matrix + 20u + 4u * i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_control(5u + i, translation[i]);
+    for (i = 0u; i < 3u; ++i)
+        high[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, values[i] & 0x7FFFu);
+    xport_gte_execute(0x00498012u);
+    for (i = 0u; i < 3u; ++i)
+        low[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        w_u32(destination + 4u * i, low[i] + (high[i] << 3));
     return destination;
 }
 
@@ -152,20 +179,22 @@ uint32 sub_8002A508(uint32 object, uint32 mode, uint32 kind)
 
 uint32 sub_8003E520(uint32 model)
 {
-    MATRIX matrix;
-    uint32 object;
-    uint32 ordering_table;
-
+    uint32 frame, object, ordering_table, result;
     FUNCTION_MARKER(0x8003E520u, "SLUS_005.10");
-    CompMatrixLV((MATRIX *)psx_addr(0x8006F680u, sizeof(MATRIX)),
-        (MATRIX *)psx_addr(model + 4u, sizeof(MATRIX)), &matrix);
+    frame = xport_guest_frame_acquire(56u);
+    (void)CompMatrixLV((MATRIX *)psx_addr(0x8006F680u, sizeof(MATRIX)),
+        (MATRIX *)psx_addr(model + 4u, sizeof(MATRIX)),
+        (MATRIX *)psx_addr(frame + 16u, sizeof(MATRIX)));
     object = r_u32(model);
     ordering_table = r_u32(0x80065910u);
-    return v8_native_1BE5C(object, &matrix, ordering_table);
+    result = sub_8001BE5C(object, frame + 16u, ordering_table);
+    xport_guest_frame_release(frame, 56u);
+    return result;
 }
 
 uint32 sub_80021C20(uint32 index)
 {
+    uint32 sub_80021B80(uint32 callback, uint32 asset, uint32 kind, uint32 flags);
     uint32 offset;
     uint32 callback;
     uint32 object;
@@ -174,7 +203,7 @@ uint32 sub_80021C20(uint32 index)
     offset = (index & 0xFFFFu) << 2;
     callback = r_u32(0x8005EC34u + offset);
     object = r_u32(0x800737A0u + offset);
-    return v8_native_21B80(callback, object, 0u, 0u);
+    return sub_80021B80(callback, object, 0u, 0u);
 }
 
 static sint32 v8_physics_add(sint32 left, sint32 right)
@@ -286,11 +315,22 @@ static void v8_physics_accumulate(V8PhysicsVectors *vectors)
 
 uint32 sub_8002F9BC(uint32 object)
 {
-    V8PhysicsVectors vectors;
+    uint32 sub_8004352C(uint32 matrix, uint32 source, uint32 destination);
+    uint32 sub_800435C0(uint32 matrix, uint32 source, uint32 destination);
+    uint32 sub_80043408(uint32 matrix, uint32 source, uint32 destination);
+    uint32 sub_800434D0(uint32 matrix, uint32 source, uint32 destination);
+    uint32 sub_800173FC(uint32 object, uint32 force, uint32 torque);
+    uint32 frame, first, second, third, registers[32] = {0u};
+    sint32 correction_x, correction_z, position_x, position_y, position_z;
+    sint32 normal_x, normal_y, normal_z, normal_x_velocity_sign, drag_context;
+    uint32 normal_pointer, velocity_pointer, normal_y_velocity_sign;
+    uint32 x_high, z_high, x_cross, y_cross, y_velocity;
+    uint64 x_product, y_product, z_product;
+    sint32 gte_x, gte_y, gte_z, position_z_word, force_y, contact_y, correction_y;
     uint32 matrix = object + 16u;
     uint32 properties = object + 164u;
-    uint32 wheel, table, surface, scratch, node, flags, callback, packed;
-    uint32 i, j, bounds;
+    uint32 wheel, table, surface, scratch, node, flags, callback;
+    uint32 i, bounds;
     uint16 heading, countdown;
     sint32 cosine, sine, radius, height, limit, ground;
     sint32 normal_speed, lateral_speed, longitudinal_speed;
@@ -300,131 +340,213 @@ uint32 sub_8002F9BC(uint32 object)
     uint64 dot;
 
     FUNCTION_MARKER(0x8002F9BCu, "SLUS_005.10");
+    frame = 0x1F8002C8u;
     w_u32(object, r_u32(object) & 0xFF8FFFFFu);
     for (i = 0u; i < 3u; ++i)
-    {
-        vectors.torque[i] = 0;
-        vectors.force[i] = 0;
-    }
+        w_u32(frame + 16u + 4u * i, 0u);
+    for (i = 0u; i < 3u; ++i)
+        w_u32(frame + 32u + 4u * i, 0u);
     wheel = r_u32(object + 252u);
     node = r_u32(object + 256u);
     heading = r_u16(object + 164u);
     w_u16(node + 66u, heading);
     w_u16(wheel + 66u, heading);
+    w_u32(frame + 188u, properties);
     value = (sint32)sub_80016A20(object + 128u);
     limit = (sint16)r_u16(object + 24u);
     w_u32(object + 140u, (uint32)(value / 128));
     if (limit > 0)
     {
-        v8_native_4352C(matrix, (const sint32 *)psx_addr(object + 128u, 12u), vectors.velocity);
+        sub_8004352C(matrix, object + 128u, frame + 48u);
         for (i = 0u; i < 4u; ++i)
         {
             wheel = r_u32(object + 252u + 4u * i);
-            vectors.offset[0] = (sint32)r_u32(wheel + 72u);
-            vectors.offset[1] = v8_physics_add((sint32)r_u32(wheel + 76u), (sint32)r_u32(wheel + 144u));
-            vectors.offset[2] = (sint32)r_u32(wheel + 80u);
+            w_u32(frame + 64u, (uint32)((sint32)r_u32(wheel + 72u)));
+            first = r_u32(wheel + 76u);
+            second = r_u32(wheel + 144u);
+            w_u32(frame + 68u, first + second);
+            w_u32(frame + 72u, (uint32)((sint32)r_u32(wheel + 80u)));
             scratch = 0x1F800000u + 24u * i;
-            v8_physics_transform(matrix, vectors.offset, (sint32 *)psx_addr(scratch, 12u), 1u);
+            sub_80043408(matrix, frame + 64u, scratch);
             ground = sub_8001D748(object, (const sint32 *)psx_addr(scratch, 12u),
                 (sint16 *)psx_addr(scratch + 16u, 6u), (uint32 *)psx_addr(scratch + 12u, 4u));
             w_u32(scratch + 4u, (uint32)ground);
         }
+        w_u32(frame + 196u, frame + 144u);
+        w_u32(frame + 200u, frame + 160u);
+        w_u32(frame + 204u, object + 128u);
         for (i = 0u; i < 4u; ++i)
         {
             wheel = r_u32(object + 252u + 4u * i);
             table = 0x800607B4u + 4u * (r_u16(wheel + 66u) & 0xFFFu);
             cosine = (sint16)r_u16(table);
             sine = (sint16)r_u16(table + 2u);
-            vectors.lever[0] = (sint32)r_u32(wheel + 72u);
-            vectors.lever[1] = v8_physics_add((sint32)r_u32(wheel + 76u), (sint32)r_u32(wheel + 144u));
-            vectors.lever[2] = (sint32)r_u32(wheel + 80u);
+            first = r_u32(wheel + 72u);
+            w_u32(frame + 192u, (uint32)sine);
+            w_u32(frame + 96u, first);
+            first = r_u32(wheel + 76u);
+            second = r_u32(wheel + 144u);
+            w_u32(frame + 100u, first + second);
+            w_u32(frame + 104u, (uint32)((sint32)r_u32(wheel + 80u)));
             radius = (sint32)r_u32(object + 148u);
             value = v8_physics_mul(radius, (sint32)r_u32(wheel + 80u));
-            vectors.wheel_velocity[0] = v8_physics_add(vectors.velocity[0], value / 4096);
-            vectors.wheel_velocity[1] = vectors.velocity[1];
+            first = r_u32(frame + 48u);
+            second = r_u32(frame + 52u);
+            third = r_u32(frame + 196u);
+            w_u32(frame + 144u, first + (uint32)(value / 4096));
+            w_u32(third + 4u, second);
             radius = (sint32)r_u32(object + 148u);
             value = v8_physics_mul(radius, (sint32)r_u32(wheel + 72u));
-            vectors.wheel_velocity[2] = v8_physics_sub(vectors.velocity[2], value / 4096);
+            first = r_u32(frame + 56u);
+            third = r_u32(frame + 196u);
+            w_u32(third + 8u, first - (uint32)(value / 4096));
             scratch = 0x1F800000u + 24u * i;
-            for (j = 0u; j < 3u; ++j)
-                vectors.contact[j] = (sint32)r_u32(scratch + 4u * j);
-            packed = r_u32(scratch + 16u);
-            vectors.normal[0] = (sint16)(uint16)packed;
-            vectors.normal[1] = (sint16)(uint16)(packed >> 16);
-            packed = r_u32(scratch + 20u);
-            vectors.normal[2] = (sint16)(uint16)packed;
-            vectors.normal[3] = (sint16)(uint16)(packed >> 16);
+            first = r_u32(scratch);
+            second = r_u32(scratch + 4u);
+            third = r_u32(scratch + 8u);
+            w_u32(frame + 112u, first);
+            w_u32(frame + 116u, second);
+            w_u32(frame + 120u, third);
+            first = r_u32(scratch + 16u);
+            second = r_u32(scratch + 20u);
+            w_u32(frame + 160u, first);
+            w_u32(frame + 164u, second);
             surface = r_u32(scratch + 12u);
-            v8_native_435C0(matrix, vectors.contact, vectors.local_contact);
-            vectors.local_contact[1] = v8_physics_sub(vectors.local_contact[1], (sint32)r_u32(wheel + 144u));
-            limit = (sint32)r_u32(wheel + 132u);
-            if (vectors.local_contact[1] >= limit)
+            w_u32(frame + 208u, surface);
+            sub_800435C0(matrix, frame + 112u, frame + 128u);
+            height = r_s32(frame + 132u);
+            value = r_s32(wheel + 144u);
+            height = v8_physics_sub(height, value);
+            w_u32(frame + 132u, (uint32)height);
+            limit = r_s32(wheel + 132u);
+            if (height >= limit)
                 w_u32(wheel + 76u, (uint32)limit);
             else
             {
+                surface = r_u32(frame + 208u);
                 flags = r_u32(object);
                 w_u32(object, flags | (surface == 0u ? 0x100000u : 0x300000u));
-                value = (sint32)r_u32(object + 128u);
-                dot = (uint64)((sint64)vectors.normal[0] * value);
-                value = (sint32)r_u32(object + 132u);
-                dot += (uint64)((sint64)vectors.normal[1] * value);
-                value = (sint32)r_u32(object + 136u);
-                dot += (uint64)((sint64)vectors.normal[2] * value);
+                normal_x = r_s16(frame + 160u);
+                value = r_s32(object + 128u);
+                normal_pointer = r_u32(frame + 200u);
+                velocity_pointer = r_u32(frame + 204u);
+                normal_x_velocity_sign = value >> 31;
+                x_product = (uint64)(uint32)normal_x * (uint32)value;
+                normal_y = r_s16(normal_pointer + 2u);
+                y_velocity = r_u32(velocity_pointer + 4u);
+                y_product = (uint64)(uint32)normal_y * y_velocity;
+                normal_z = r_s16(normal_pointer + 4u);
+                w_u32(frame + 216u, (uint32)y_product);
+                w_u32(frame + 220u, (uint32)(y_product >> 32));
+                third = r_u32(velocity_pointer + 8u);
+                z_product = (uint64)(uint32)normal_z * third;
+                x_cross = (uint32)v8_physics_mul(normal_x, normal_x_velocity_sign);
+                x_high = (uint32)(x_product >> 32) + x_cross
+                    + (uint32)v8_physics_mul(value, normal_x >> 31);
+                normal_y_velocity_sign = (uint32)v8_physics_mul(normal_y, (sint32)y_velocity >> 31);
+                y_cross = (uint32)v8_physics_mul((sint32)y_velocity, normal_y >> 31);
+                z_high = (uint32)(z_product >> 32)
+                    + (uint32)v8_physics_mul(normal_z, (sint32)third >> 31)
+                    + (uint32)v8_physics_mul((sint32)third, normal_z >> 31);
+                w_u32(frame + 232u, x_cross);
+                first = r_u32(frame + 220u) + normal_y_velocity_sign;
+                w_u32(frame + 220u, first);
+                first += y_cross;
+                w_u32(frame + 220u, first);
+                first = r_u32(frame + 216u);
+                second = r_u32(frame + 220u);
+                dot = ((uint64)x_high << 32) | (uint32)x_product;
+                dot += ((uint64)second << 32) | first;
+                dot += ((uint64)z_high << 32) | (uint32)z_product;
                 normal_speed = (sint32)((sint64)dot >> 15);
-                v8_physics_transform_normal(matrix, vectors.normal, vectors.rotated_normal);
-                delta = v8_physics_sub((sint32)r_u32(wheel + 72u), vectors.local_contact[0]);
+                normal_pointer = r_u32(frame + 200u);
+                sub_800434D0(matrix, normal_pointer, frame + 168u);
+                value = v8_physics_mul(v8_physics_neg(r_s32(frame + 168u)), normal_speed);
+                first = r_u32(wheel + 72u);
+                second = r_u32(frame + 128u);
+                delta = (sint32)(first - second);
                 if (delta >= 0)
                     delta = 0;
-                value = v8_physics_mul(v8_physics_neg(vectors.rotated_normal[0]), normal_speed);
-                vectors.correction[0] = v8_physics_sub(value / 4096, delta);
-                delta = v8_physics_sub((sint32)r_u32(wheel + 80u), vectors.local_contact[2]);
+                w_u32(frame + 80u, (uint32)(v8_physics_sub(value / 4096, delta)));
+                value = v8_physics_mul(v8_physics_neg(r_s32(frame + 176u)), normal_speed);
+                first = r_u32(wheel + 80u);
+                second = r_u32(frame + 136u);
+                delta = (sint32)(first - second);
                 if (delta >= 0)
                     delta = 0;
-                value = v8_physics_mul(v8_physics_neg(vectors.rotated_normal[2]), normal_speed);
-                vectors.correction[2] = v8_physics_sub(value / 4096, delta);
-                height = (sint32)r_u32(wheel + 128u);
-                if (height < vectors.local_contact[1])
-                    height = vectors.local_contact[1];
-                value = v8_physics_sub((sint32)r_u32(wheel + 132u), height);
-                value = v8_physics_mul(value, (sint16)r_u16(wheel + 140u));
+                w_u32(frame + 88u, (uint32)(v8_physics_sub(value / 4096, delta)));
+                height = r_s32(wheel + 128u);
+                contact_y = r_s32(frame + 132u);
+                if (height < contact_y)
+                    height = contact_y;
+                value = r_s32(wheel + 132u);
+                stiffness = r_s16(wheel + 140u);
+                value = v8_physics_mul(v8_physics_sub(value, height), stiffness);
                 value = (sint32)((uint32)value << 7);
-                vectors.correction[1] = v8_physics_div(value, vectors.rotated_normal[1]);
-                height = (sint32)r_u32(wheel + 128u);
-                if (height >= vectors.local_contact[1] && (sint32)r_u32(wheel + 76u) >= vectors.local_contact[1])
+                correction_y = v8_physics_div(value, r_s32(frame + 172u));
+                w_u32(frame + 84u, (uint32)correction_y);
+                height = r_s32(wheel + 128u);
+                if (height < contact_y)
                 {
-                    delta = v8_physics_sub(vectors.local_contact[1], (sint32)r_u32(wheel + 76u));
-                    vectors.correction[1] = v8_physics_add(vectors.correction[1], (sint32)((uint32)delta << 4));
-                    w_u32(object, r_u32(object) | 0x400000u);
+                    value = r_s32(wheel + 76u);
+                    stiffness = r_s16(wheel + 142u);
+                    value = v8_physics_mul(v8_physics_sub(contact_y, value), stiffness);
+                    correction_y = v8_physics_add(correction_y, value / 32);
+                    w_u32(frame + 84u, (uint32)correction_y);
                 }
                 else
                 {
-                    delta = v8_physics_sub(vectors.local_contact[1], (sint32)r_u32(wheel + 76u));
-                    value = v8_physics_mul(delta, (sint16)r_u16(wheel + 142u));
-                    vectors.correction[1] = v8_physics_add(vectors.correction[1], value / 32);
+                    value = r_s32(wheel + 76u);
+                    delta = v8_physics_sub(contact_y, value);
+                    if (value < contact_y)
+                    {
+                        value = r_s32(wheel + 76u);
+                        stiffness = r_s16(wheel + 142u);
+                        value = v8_physics_mul(v8_physics_sub(contact_y, value), stiffness);
+                        correction_y = v8_physics_add(correction_y, value / 32);
+                        w_u32(frame + 84u, (uint32)correction_y);
+                    }
+                    else
+                    {
+                        correction_y = v8_physics_add(correction_y, (sint32)((uint32)delta << 4));
+                        w_u32(frame + 84u, (uint32)correction_y);
+                        w_u32(object, r_u32(object) | 0x400000u);
+                    }
                 }
-                w_u32(wheel + 76u, (uint32)vectors.local_contact[1]);
+                contact_y = r_s32(frame + 132u);
+                w_u32(wheel + 76u, (uint32)contact_y);
+                surface = r_u32(frame + 208u);
                 stiffness = surface == 0u ? 0 : (sint16)r_u16(surface + 16u);
                 if (stiffness != 0)
                 {
-                    value = v8_physics_mul(v8_physics_neg(vectors.correction[1]), v8_physics_sub(256, stiffness));
+                    value = v8_physics_mul(v8_physics_neg(r_s32(frame + 84u)), v8_physics_sub(256, stiffness));
                     load = value >> 7;
                 }
                 else
-                    load = (sint32)((uint32)v8_physics_neg(vectors.correction[1]) << 1);
+                    load = (sint32)((uint32)v8_physics_neg(r_s32(frame + 84u)) << 1);
                 if ((r_u32(wheel) & 0x20000u) != 0u)
                 {
-                    dot = (uint64)((sint64)vectors.wheel_velocity[0] * sine);
-                    dot -= (uint64)((sint64)vectors.wheel_velocity[2] * cosine);
+                    first = r_u32(frame + 144u);
+                    sine = r_s32(frame + 192u);
+                    dot = (uint64)((sint64)(sint32)first * sine);
+                    first = r_u32(frame + 152u);
+                    dot -= (uint64)((sint64)(sint32)first * cosine);
+                    first = r_u32(frame + 48u);
                     lateral_speed = (sint32)((sint64)dot >> 17);
-                    dot = (uint64)((sint64)vectors.velocity[0] * cosine);
-                    dot += (uint64)((sint64)vectors.velocity[2] * sine);
+                    dot = (uint64)((sint64)(sint32)first * cosine);
+                    first = r_u32(frame + 56u);
+                    z_product = (uint64)((sint64)(sint32)first * sine);
+                    w_u32(frame + 224u, (uint32)z_product);
+                    w_u32(frame + 228u, (uint32)(z_product >> 32));
+                    dot += z_product;
                     longitudinal_speed = (sint32)((sint64)dot >> 14);
                 }
                 else
                 {
-                    lateral_speed = vectors.wheel_velocity[0] >> 5;
-                    longitudinal_speed = vectors.velocity[2] >> 2;
+                    lateral_speed = r_s32(frame + 144u) >> 5;
+                    longitudinal_speed = r_s32(frame + 56u) >> 2;
                 }
+                properties = r_u32(frame + 188u);
                 value = (sint16)r_u16(properties + 2u);
                 friction_limit = value < 0 ? v8_physics_neg(value) : value;
                 friction_limit = (sint32)((uint32)friction_limit << 6);
@@ -435,13 +557,17 @@ uint32 sub_8002F9BC(uint32 object)
                 {
                     if ((r_u32(wheel) & 0x10000u) == 0u)
                         friction = 0;
-                    else if ((sint8)r_u8(properties + 14u) <= 0)
-                        friction = v8_physics_neg(friction);
                     else
                     {
-                        value = v8_physics_neg(longitudinal_speed) >> 2;
-                        if (friction_limit < value)
-                            friction = value;
+                        properties = r_u32(frame + 188u);
+                        if (r_s8(properties + 14u) <= 0)
+                            friction = v8_physics_neg(friction);
+                        else
+                        {
+                            value = v8_physics_neg(longitudinal_speed) >> 2;
+                            if (friction_limit < value)
+                                friction = value;
+                        }
                     }
                 }
                 else if (longitudinal_speed <= 0)
@@ -457,12 +583,15 @@ uint32 sub_8002F9BC(uint32 object)
                     if (friction < value)
                         friction = value;
                 }
+                surface = r_u32(frame + 208u);
+                drag_context = (sint32)surface;
                 stiffness = surface == 0u ? 0 : (sint16)r_u16(surface + 18u);
                 if (stiffness != 0)
                 {
                     value = longitudinal_speed >> 8;
                     delta = value < 0 ? v8_physics_neg(value) : value;
-                    delta = v8_physics_mul(v8_physics_mul(value, delta), stiffness) >> 12;
+                    drag_context = v8_physics_mul(v8_physics_mul(value, delta), stiffness);
+                    delta = drag_context >> 12;
                     friction = v8_physics_sub(friction, delta);
                 }
                 lateral = v8_physics_neg(lateral_speed);
@@ -473,29 +602,79 @@ uint32 sub_8002F9BC(uint32 object)
                 }
                 else if (lateral < v8_physics_neg(load))
                     lateral = v8_physics_neg(load);
+                sine = r_s32(frame + 192u);
                 value = v8_physics_add(v8_physics_mul(cosine, friction), v8_physics_mul(sine, lateral));
-                vectors.correction[0] = v8_physics_add(vectors.correction[0], value >> 12);
+                correction_x = r_s32(frame + 80u);
+                position_x = r_s32(frame + 96u) >> 3;
+                position_y = r_s32(frame + 100u) >> 3;
+                position_z = r_s32(frame + 104u) >> 3;
+                correction_z = r_s32(frame + 88u);
+                correction_x = v8_physics_add(correction_x, value >> 12);
+                w_u32(frame + 80u, (uint32)correction_x);
                 value = v8_physics_sub(v8_physics_mul(sine, friction), v8_physics_mul(cosine, lateral));
-                vectors.correction[2] = v8_physics_add(vectors.correction[2], value >> 12);
-                xport_gte_write_control(0u, (uint32)(vectors.lever[0] >> 3));
-                xport_gte_write_control(2u, (uint32)(vectors.lever[1] >> 3));
-                xport_gte_write_control(4u, (uint32)(vectors.lever[2] >> 3));
-                for (j = 0u; j < 3u; ++j)
-                    xport_gte_write_data(9u + j, (uint32)v8_physics_clip(vectors.correction[j] >> 3, -32768, 32767));
+                correction_z = v8_physics_add(correction_z, value >> 12);
+                w_u32(frame + 88u, (uint32)correction_z);
+                xport_gte_write_control(0u, (uint32)position_x);
+                xport_gte_write_control(2u, (uint32)position_y);
+                xport_gte_write_control(4u, (uint32)position_z);
+                gte_x = v8_physics_clip(correction_x >> 3, -32768, 32767);
+                value = r_s32(frame + 84u);
+                gte_y = v8_physics_clip(value >> 3, -32768, 32767);
+                gte_z = v8_physics_clip(correction_z >> 3, -32768, 32767);
+                xport_gte_write_data(9u, (uint32)gte_x);
+                xport_gte_write_data(10u, (uint32)gte_y);
+                xport_gte_write_data(11u, (uint32)gte_z);
                 xport_gte_execute(0x0178000Cu);
-                v8_physics_accumulate(&vectors);
+                first = r_u32(frame + 32u);
+                w_u32(frame + 32u, first + (uint32)correction_x);
+                first = r_u32(frame + 36u);
+                second = r_u32(frame + 84u);
+                third = r_u32(frame + 40u);
+                w_u32(frame + 36u, first + second);
+                second = r_u32(frame + 88u);
+                w_u32(frame + 40u, third + second);
+                value = (sint32)xport_gte_read_data(25u);
+                first = r_u32(frame + 16u);
+                w_u32(frame + 16u, first + (uint32)value);
+                value = (sint32)xport_gte_read_data(26u);
+                first = r_u32(frame + 20u);
+                w_u32(frame + 20u, first + (uint32)value);
+                value = (sint32)xport_gte_read_data(27u);
+                first = r_u32(frame + 24u);
+                surface = r_u32(frame + 208u);
+                w_u32(frame + 24u, first + (uint32)value);
                 if (surface != 0u)
                 {
                     value = (sint16)r_u16(surface + 22u);
                     if (value != 0 && value != 7)
                     {
                         callback = r_u32(0x80065A34u);
-                        /* Pass the addressable host point to the terrain callback */
-                        v8_native_point_callback(callback, wheel, 9u, vectors.contact);
+                        registers[2] = callback;
+                        registers[4] = wheel;
+                        registers[5] = 9u;
+                        registers[6] = frame + 112u;
+                        registers[3] = (uint32)value;
+                        registers[7] = (uint32)correction_z;
+                        registers[16] = (uint32)friction;
+                        registers[17] = (uint32)normal_x_velocity_sign;
+                        registers[18] = normal_y_velocity_sign;
+                        registers[19] = (uint32)(normal_x >> 31);
+                        registers[20] = wheel;
+                        registers[21] = i;
+                        registers[22] = object;
+                        registers[23] = (uint32)drag_context;
+                        registers[28] = 0x80065304u;
+                        registers[29] = frame;
+                        registers[30] = (uint32)cosine;
+                        registers[31] = 0x80030370u;
+                        xport_guest_call_known_registers(callback, registers, 0xF0FF00FDu);
                     }
                 }
             }
-            value = v8_physics_add(v8_physics_mul(cosine, vectors.wheel_velocity[0]), v8_physics_mul(sine, vectors.wheel_velocity[2]));
+            first = r_u32(frame + 144u);
+            sine = r_s32(frame + 192u);
+            second = r_u32(frame + 152u);
+            value = v8_physics_add(v8_physics_mul(cosine, (sint32)first), v8_physics_mul(sine, (sint32)second));
             value /= 4096;
             delta = v8_physics_mul(value, (sint32)r_u32(wheel + 148u));
             w_u32(wheel + 152u, (uint32)value);
@@ -504,53 +683,106 @@ uint32 sub_8002F9BC(uint32 object)
         }
         for (i = 0u; i < 4u; ++i)
             sub_8001D708(r_u32(object + 252u + 4u * i));
-        v8_physics_transform(matrix, vectors.force, vectors.force, 0u);
+        sub_80043358(matrix, frame + 32u, frame + 32u);
     }
     else
     {
         bounds = r_u32(object + 92u) + 4u;
         for (i = 0u; i < 8u; ++i)
         {
-            vectors.wheel_velocity[0] = (sint32)r_u32(bounds + ((i & 1u) != 0u ? 0u : 12u));
-            vectors.wheel_velocity[1] = (sint32)r_u32(bounds + ((i & 2u) != 0u ? 4u : 16u));
-            vectors.wheel_velocity[2] = (sint32)r_u32(bounds + ((i & 4u) != 0u ? 8u : 20u));
-            v8_physics_transform(matrix, vectors.wheel_velocity, vectors.wheel_velocity, 1u);
-            ground = sub_8001D748(object, vectors.wheel_velocity, NULL, &vectors.surface);
-            if (v8_physics_sub(vectors.wheel_velocity[1], ground) > 0)
+            w_u32(frame + 144u, (uint32)((sint32)r_u32(bounds + ((i & 1u) != 0u ? 0u : 12u))));
+            (void)r_u32(frame + 144u);
+            w_u32(frame + 148u, (uint32)((sint32)r_u32(bounds + ((i & 2u) != 0u ? 4u : 16u))));
+            (void)r_u32(frame + 148u);
+            w_u32(frame + 152u, (uint32)((sint32)r_u32(bounds + ((i & 4u) != 0u ? 8u : 20u))));
+            (void)r_u32(frame + 152u);
+            sub_80043408(matrix, frame + 144u, frame + 144u);
+            ground = sub_8001D748(object, (const sint32 *)psx_addr(frame + 144u, 12u),
+                NULL, (uint32 *)psx_addr(frame + 184u, 4u));
+            height = r_s32(frame + 148u);
+            delta = v8_physics_sub(height, ground);
+            if (delta > 0)
             {
                 value = v8_physics_neg((sint32)r_u32(object + 128u));
-                vectors.correction[0] = v8_physics_clip(value / 4, -2880, 2880);
+                w_u32(frame + 96u, (uint32)(v8_physics_clip(value / 4, -2880, 2880)));
                 value = v8_physics_neg((sint32)r_u32(object + 136u));
-                vectors.correction[2] = v8_physics_clip(value / 4, -2880, 2880);
-                vectors.correction[1] = v8_physics_sub(ground, vectors.wheel_velocity[1]);
-                value = (sint32)r_u32(object + 132u);
+                correction_z = v8_physics_clip(value / 4, -2880, 2880);
+                w_u32(frame + 104u, (uint32)correction_z);
+                correction_y = v8_physics_neg(delta);
+                w_u32(frame + 100u, (uint32)correction_y);
+                value = r_s32(object + 132u);
                 if (value > 0)
-                    vectors.correction[1] = v8_physics_sub(vectors.correction[1], value >> 2);
-                for (j = 0u; j < 3u; ++j)
                 {
-                    delta = v8_physics_sub(vectors.wheel_velocity[j], (sint32)r_u32(object + 72u + 4u * j));
-                    xport_gte_write_control(2u * j, (uint32)(delta >> 3));
+                    correction_y = v8_physics_sub(correction_y, value >> 2);
+                    w_u32(frame + 100u, (uint32)correction_y);
                 }
-                for (j = 0u; j < 3u; ++j)
-                    xport_gte_write_data(9u + j, (uint32)(vectors.correction[j] >> 3));
+                first = r_u32(frame + 144u);
+                second = r_u32(object + 72u);
+                position_x = (sint32)(first - second) >> 3;
+                first = r_u32(frame + 148u);
+                second = r_u32(object + 76u);
+                position_y = (sint32)(first - second) >> 3;
+                first = r_u32(frame + 152u);
+                second = r_u32(object + 80u);
+                position_z_word = (sint32)second;
+                position_z = (sint32)(first - second) >> 3;
+                xport_gte_write_control(0u, (uint32)position_x);
+                xport_gte_write_control(2u, (uint32)position_y);
+                xport_gte_write_control(4u, (uint32)position_z);
+                correction_x = r_s32(frame + 96u);
+                value = r_s32(frame + 100u);
+                xport_gte_write_data(9u, (uint32)(correction_x >> 3));
+                xport_gte_write_data(10u, (uint32)(value >> 3));
+                xport_gte_write_data(11u, (uint32)(correction_z >> 3));
                 xport_gte_execute(0x0178000Cu);
-                v8_physics_accumulate(&vectors);
-                surface = vectors.surface;
+                first = r_u32(frame + 32u);
+                third = r_u32(frame + 36u);
+                w_u32(frame + 32u, first + (uint32)correction_x);
+                first = third;
+                second = r_u32(frame + 100u);
+                third = r_u32(frame + 40u);
+                w_u32(frame + 36u, first + second);
+                second = r_u32(frame + 104u);
+                w_u32(frame + 40u, third + second);
+                value = (sint32)xport_gte_read_data(25u);
+                first = r_u32(frame + 16u);
+                w_u32(frame + 16u, first + (uint32)value);
+                value = (sint32)xport_gte_read_data(26u);
+                first = r_u32(frame + 20u);
+                w_u32(frame + 20u, first + (uint32)value);
+                value = (sint32)xport_gte_read_data(27u);
+                first = r_u32(frame + 24u);
+                surface = r_u32(frame + 184u);
+                w_u32(frame + 24u, first + (uint32)value);
                 if (surface != 0u)
                 {
                     value = (sint16)r_u16(surface + 22u);
                     if (value != 0 && value != 7)
                     {
                         callback = r_u32(0x80065A34u);
-                        /* Pass the addressable host point to the terrain callback */
-                        v8_native_point_callback(callback, object, 9u, vectors.wheel_velocity);
+                        registers[2] = callback;
+                        registers[4] = object;
+                        registers[5] = 9u;
+                        registers[6] = frame + 144u;
+                        registers[3] = (uint32)value;
+                        registers[7] = (uint32)position_z_word;
+                        registers[16] = frame + 144u;
+                        registers[17] = bounds;
+                        registers[18] = frame + 32u;
+                        registers[19] = frame + 96u;
+                        registers[21] = i;
+                        registers[22] = object;
+                        registers[28] = 0x80065304u;
+                        registers[29] = frame;
+                        registers[31] = 0x800306A4u;
+                        xport_guest_call_known_registers(callback, registers, 0xB06F00FDu);
                     }
                 }
                 if ((sint32)r_u32(object + 132u) >= 19457)
                     w_u32(object, r_u32(object) | 0x400000u);
             }
         }
-        v8_native_4352C(matrix, vectors.torque, vectors.torque);
+        sub_8004352C(matrix, frame + 16u, frame + 16u);
         for (i = 0u; i < 4u; ++i)
         {
             wheel = r_u32(object + 252u + 4u * i);
@@ -565,29 +797,41 @@ uint32 sub_8002F9BC(uint32 object)
             sub_8001D708(wheel);
         }
     }
-    vectors.force[1] = v8_physics_add(vectors.force[1], (sint32)r_u32(0x80065334u));
+    first = r_u32(frame + 36u);
+    second = r_u32(0x80065334u);
+    force_y = (sint32)(first + second);
+    w_u32(frame + 36u, (uint32)force_y);
     value = (sint32)r_u32(object + 140u);
     delta = (sint32)r_u32(object + 220u);
     damping = v8_physics_mul(value, delta);
     for (i = 0u; i < 3u; ++i)
     {
         value = (sint32)r_u32(object + 128u + 4u * i);
-        delta = (sint32)(((sint64)value * damping) >> 32);
-        vectors.force[i] = v8_physics_sub(vectors.force[i], delta);
+        dot = (uint64)((sint64)value * damping);
+        if (i == 1u)
+            value = force_y;
+        else
+            value = r_s32(frame + 32u + 4u * i);
+        w_u32(frame + 224u, (uint32)dot);
+        w_u32(frame + 228u, (uint32)(dot >> 32));
+        delta = (sint32)(uint32)(dot >> 32);
+        w_u32(frame + 32u + 4u * i, (uint32)v8_physics_sub(value, delta));
     }
-    v8_native_173FC(object, vectors.force, vectors.torque);
-    for (i = 0u; i < 3u; ++i)
-    {
-        value = (sint32)r_u32(object + 144u + 4u * i);
-        w_u32(object + 144u + 4u * i, (uint32)v8_physics_sub(value, value / 32));
-    }
+    sub_800173FC(object, frame + 32u, frame + 16u);
+    value = r_s32(object + 144u);
+    delta = r_s32(object + 148u);
+    w_u32(object + 144u, (uint32)v8_physics_sub(value, value / 32));
+    value = r_s32(object + 152u);
+    w_u32(object + 148u, (uint32)v8_physics_sub(delta, delta / 32));
+    w_u32(object + 152u, (uint32)v8_physics_sub(value, value / 32));
     for (i = 0u; i < 3u; ++i)
     {
         node = r_u32(object + 272u + 4u * i);
         if (node != 0u)
         {
+            value = r_s16(node + 6u);
             countdown = r_u16(node + 6u);
-            if (countdown != 0u)
+            if (value != 0)
                 w_u16(node + 6u, (uint16)(countdown - 1u));
         }
     }
@@ -600,7 +844,9 @@ uint32 sub_8002F9BC(uint32 object)
     flags = r_u32(object);
     result = (sint32)(flags & 0x800000u);
     if (result != 0)
+    {
         return (uint32)result;
+    }
     if (r_u16(object + 288u) != 0u)
     {
         camera_target[0] = (sint32)r_u32(object + 36u);
@@ -619,6 +865,7 @@ uint32 sub_8002F9BC(uint32 object)
     }
     else if ((sint16)r_u16(object + 6u) < 0 || (flags & 0x40000u) != 0u)
     {
+        properties = r_u32(frame + 188u);
         camera_target[0] = (sint32)r_u32(object + 36u);
         camera_position[0] = (sint32)r_u32(object + 72u);
         stiffness = 256 - r_u8(properties + 16u);
@@ -638,16 +885,27 @@ uint32 sub_8002F9BC(uint32 object)
     }
     else
     {
-        for (i = 0u; i < 3u; ++i)
-            vectors.offset[i] = (sint32)r_u32(object + 36u + 4u * i);
-        for (i = 0u; i < 3u; ++i)
-            w_u32(object + 72u + 4u * i, (uint32)vectors.offset[i]);
+        first = r_u32(object + 36u);
+        second = r_u32(object + 40u);
+        third = r_u32(object + 44u);
+        w_u32(object + 72u, first);
+        w_u32(object + 76u, second);
+        w_u32(object + 80u, third);
     }
     return (uint32)result;
 }
 
-uint32 sub_8002F998(uint32 object)
+uint32 sub_8002F998(uint32 object, uint32 incoming_sp, uint32 incoming_ra)
 {
+    void abort(void);
+    uint32 result, restored_sp, restored_ra;
     FUNCTION_MARKER(0x8002F998u, "SLUS_005.10");
-    return sub_8002F9BC(object);
+    w_u32(0x1F8003F0u, incoming_ra);
+    w_u32(0x1F8003F4u, incoming_sp);
+    result = sub_8002F9BC(object);
+    restored_ra = r_u32(0x1F8003F0u);
+    restored_sp = r_u32(0x1F8003F4u);
+    if (restored_ra != incoming_ra || restored_sp != incoming_sp)
+        abort();
+    return result;
 }

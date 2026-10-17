@@ -8,7 +8,7 @@ uint32 sub_800116F4(uint32 bytes);
 void sub_80045088(uint32 address);
 uint32 sub_80045134(uint32 address, uint32 bytes);
 void sub_80044394(uint32 sound);
-void sub_8001AA0C(uint32 object);
+uint32 sub_8001AA0C(uint32 object);
 uint32 sub_8001F9CC(uint32 object, uint32 tick);
 uint32 sub_80015A20(uint32 destination, uint32 bytes);
 uint32 sub_80022524(uint32 *header, uint32 *remaining);
@@ -17,7 +17,7 @@ uint32 sub_80022D54(uint32 object);
 uint32 sub_8002305C(uint32 object);
 uint32 sub_8002346C(uint32 object);
 uint32 sub_80022E38(uint32 object);
-uint32 sub_8002F998(uint32 object);
+uint32 sub_8002F998(uint32 object, uint32 incoming_sp, uint32 incoming_ra);
 uint32 sub_8002D82C(uint32 object, uint32 update);
 void sub_80042F5C(uint32 object);
 void sub_8002EFE0(uint32 object, uint32 player_state);
@@ -148,7 +148,7 @@ uint32 sub_800225D4(uint32 *header, uint32 *remaining)
     return output;
 }
 
-void sub_8001AA38(uint32 object)
+uint32 sub_8001AA38(uint32 object)
 {
     uint32 value;
     FUNCTION_MARKER(0x8001AA38u, "SLUS_005.10");
@@ -161,7 +161,7 @@ void sub_8001AA38(uint32 object)
     value = r_u32(object + 8u);
     if (value != 0u)
         sub_80044394(value);
-    sub_8001AA0C(object);
+    return sub_8001AA0C(object);
 }
 
 uint32 sub_8004366C(uint32 matrix)
@@ -301,9 +301,11 @@ sint16 *sub_80025800(sint32 x, sint32 z, sint16 *output)
 sint32 sub_8001D748(uint32 object, const sint32 *point, sint16 *normal, uint32 *surface_out)
 {
     sint32 height;
-    uint32 candidate, result;
+    uint32 candidate, result, x, z;
     FUNCTION_MARKER(0x8001D748u, "SLUS_005.10");
-    height = sub_80025400(point[0], point[2]);
+    x = (uint32)point[0];
+    z = (uint32)point[2];
+    height = sub_80025400(x, z);
     candidate = r_u32(object + 116u);
     if (candidate != 0u)
     {
@@ -323,26 +325,37 @@ sint32 sub_8001D748(uint32 object, const sint32 *point, sint16 *normal, uint32 *
     }
     if (normal != NULL)
     {
-        sub_80025648((uint32)point[0], (uint32)point[2], normal);
+        x = (uint32)point[0];
+        z = (uint32)point[2];
+        sub_80025648(x, z, normal);
         VectorNormalSS((SVECTOR *)normal, (SVECTOR *)normal);
     }
     if (surface_out != NULL)
-        *surface_out = sub_800255F4((uint32)point[0], (uint32)point[2]);
+    {
+        x = (uint32)point[0];
+        z = (uint32)point[2];
+        *surface_out = sub_800255F4(x, z);
+    }
     return height;
 }
 
-void sub_800441C8(uint32 channel)
+uint32 sub_800441C8(uint32 channel, uint32 incoming_v0)
 {
     FUNCTION_MARKER(0x800441C8u, "SLUS_005.10");
-    if (channel != 0u)
-        sub_80043FF0(0u, 1u << ((channel - 1u) & 31u));
+    if (channel == 0u)
+        return incoming_v0;
+    return sub_80043FF0(0u, 1u << ((channel - 1u) & 31u));
 }
 
-void sub_80044574(uint32 channel, uint32 volume)
+uint32 sub_80044574(uint32 channel, uint32 volume, uint32 incoming_v0)
 {
+    uint32 address;
     FUNCTION_MARKER(0x80044574u, "SLUS_005.10");
-    if (channel != 0u)
-        SpuSetVoiceVolume((sint32)(channel - 1u), (sint16)volume, (sint16)(volume >> 16));
+    if (channel == 0u)
+        return incoming_v0;
+    address = 0x1F801BF0u + (channel << 4);
+    w_u32(address, volume);
+    return address;
 }
 
 uint32 sub_8001B270(uint32 object, uint32 primitive_context)
@@ -421,25 +434,38 @@ uint32 sub_80023940(uint32 object)
 
 uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
 {
+    uint32 sprintfPSX(uint32 destination, uint32 format, uint32 value);
     const uint32 gp = 0x80065304u;
     uint32 surface, player_state, flags, first, second, third, channel, kind;
     uint32 count, timer, value, previous, current, target, player;
-    char message[64];
+    uint32 frame, registers[32] = {0u};
+    char *message;
     FUNCTION_MARKER(0x8002E2BCu, "SLUS_005.10");
+    frame = xport_guest_frame_acquire(104u);
+    message = (char *)psx_addr(frame + 16u, 64u);
     if (reason == 2u)
     {
-        sub_8002F998(object);
+        sub_8002F998(object, frame, 0x8002E5BCu);
+        xport_guest_frame_release(frame, 104u);
         return 0u;
     }
     if (reason == 3u)
-        return sub_8002D82C(object, update);
+    {
+        value = sub_8002D82C(object, update);
+        xport_guest_frame_release(frame, 104u);
+        return value;
+    }
     if (reason == 4u)
     {
         sub_80042F5C(object + 192u);
+        xport_guest_frame_release(frame, 104u);
         return 0u;
     }
     if (reason != 0u)
+    {
+        xport_guest_frame_release(frame, 104u);
         return 0u;
+    }
     if (r_s16(object + 6u) < 0)
     {
         first = r_u32(object + 36u);
@@ -461,7 +487,7 @@ uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
             channel = r_u8(object + 211u);
             if (channel != 0u)
             {
-                sub_800441C8(channel);
+                sub_800441C8(channel, channel);
                 w_u8(object + 210u, 0u);
                 w_u8(object + 211u, 0u);
             }
@@ -473,13 +499,25 @@ uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
             if (kind != current)
             {
                 channel = r_u8(object + 211u);
-                sub_800441C8(channel);
+                sub_800441C8(channel, current);
                 kind = r_u8(surface + 24u);
                 w_u8(object + 210u, kind);
                 if (kind != 0u)
                 {
                     target = r_u32(gp + 0x730u);
-                    value = xport_guest_call3(target, object, 11u, surface);
+                    registers[2] = target;
+                    registers[4] = object;
+                    registers[5] = 11u;
+                    registers[6] = surface;
+                    registers[16] = object;
+                    registers[17] = surface;
+                    registers[18] = object + 164u;
+                    registers[19] = player_state;
+                    registers[20] = update;
+                    registers[28] = gp;
+                    registers[29] = frame;
+                    registers[31] = 0x8002E414u;
+                    value = xport_guest_call_known_registers(target, registers, 0xB01F0075u);
                 }
                 else
                     value = 0u;
@@ -513,7 +551,7 @@ uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
             {
                 value = sub_800446DC(object + 36u);
                 channel = (uint32)r_s8(object + 5u);
-                sub_80044574(channel, value);
+                sub_80044574(channel, value, value);
             }
         }
     }
@@ -527,7 +565,7 @@ uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
             if (r_s16(object + 6u) < 0)
             {
                 count = r_u8(object + 185u);
-                sprintf(message, (const char *)psx_addr(0x80065738u, 1u), count);
+                (void)sprintfPSX(frame + 16u, 0x80065738u, count);
                 if (r_u32(gp + 16u) != 0u)
                     player = 0u - (uint32)r_s16(object + 6u);
                 else
@@ -553,18 +591,24 @@ uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update)
     if (r_s16(object + 6u) != 0)
         sub_80020890(object, 0u);
     else
-        sub_8002F998(object);
+        sub_8002F998(object, frame, 0x8002E5BCu);
+    xport_guest_frame_release(frame, 104u);
     return 0u;
 }
 
 void sub_8003E598(uint32 object, uint32 owner)
 {
-    uint32 cursor, opcode, i, first = 1u;
-    sint32 bounds[6], value;
+    uint32 cursor, opcode, i, first = 1u, frame, result;
+    uint32 a, b, c, d;
+    sint32 value, bound, x, z;
     FUNCTION_MARKER(0x8003E598u, "SLUS_005.10");
+    frame = xport_guest_frame_acquire(48u);
     cursor = r_u32(object + 92u);
     if (cursor == 0u)
+    {
+        xport_guest_frame_release(frame, 48u);
         return;
+    }
     opcode = r_u16(cursor);
     while (opcode != 0u)
     {
@@ -573,40 +617,42 @@ void sub_8003E598(uint32 object, uint32 owner)
         {
             if (first != 0u)
             {
-                bounds[0] = r_s32(cursor + 4u);
-                bounds[1] = r_s32(cursor + 8u);
-                bounds[2] = r_s32(cursor + 12u);
-                bounds[3] = r_s32(cursor + 16u);
-                bounds[4] = r_s32(cursor + 20u);
-                bounds[5] = r_s32(cursor + 24u);
+                a = r_u32(cursor + 4u);
+                b = r_u32(cursor + 8u);
+                c = r_u32(cursor + 12u);
+                d = r_u32(cursor + 16u);
+                w_u32(frame + 16u, a);
+                w_u32(frame + 20u, b);
+                w_u32(frame + 24u, c);
+                w_u32(frame + 28u, d);
+                a = r_u32(cursor + 20u);
+                b = r_u32(cursor + 24u);
+                w_u32(frame + 32u, a);
+                w_u32(frame + 36u, b);
                 first = 0u;
             }
             else
             {
-                for (i = 0u; i < 3u; ++i)
+                for (i = 0u; i < 6u; ++i)
                 {
                     value = r_s32(cursor + 4u + 4u * i);
-                    if (value < bounds[i])
-                        bounds[i] = value;
-                }
-                for (i = 3u; i < 6u; ++i)
-                {
-                    value = r_s32(cursor + 4u + 4u * i);
-                    if (bounds[i] < value)
-                        bounds[i] = value;
+                    bound = r_s32(frame + 16u + 4u * i);
+                    if (i < 3u ? value < bound : bound < value)
+                        w_u32(frame + 16u + 4u * i, (uint32)value);
                 }
             }
             cursor += 28u;
+            opcode = r_u16(cursor);
         }
         else if (opcode == 2u)
+        {
             cursor += 12u * r_u16(cursor + 2u) + 4u;
-        opcode = r_u16(cursor);
+            opcode = r_u16(cursor);
+        }
     }
-    if (first != 0u)
-    {
-        /* Fail fast for the user-authorized undefined original bounds path */
-        fprintf(stderr, "V8: bounds stream has no opcode 1 record (object %08X)\n", object);
-        abort();
-    }
-    w_u32(object + 112u, sub_8003E254(owner, bounds[3], bounds[5]));
+    x = r_s32(frame + 28u);
+    z = r_s32(frame + 36u);
+    result = sub_8003E254(owner, x, z);
+    w_u32(object + 112u, result);
+    xport_guest_frame_release(frame, 48u);
 }

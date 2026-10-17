@@ -1505,12 +1505,12 @@ void sub_8001A0AC(uint32 rectangle, uint32 color)
         registered = 1u;
     }
     packet.tag = 0x03000000u;
-    packet.code = 0x60u;
-    packet.r0 = (uint8)color;
-    packet.g0 = (uint8)(color >> 8);
-    packet.b0 = (uint8)(color >> 16);
-    packet.x0 = (sint16)r_u16(rectangle);
-    packet.y0 = (sint16)r_u16(rectangle + 2u);
+    packet.rgbc.code = 0x60u;
+    packet.rgbc.r = (uint8)color;
+    packet.rgbc.g = (uint8)(color >> 8);
+    packet.rgbc.b = (uint8)(color >> 16);
+    packet.p[0].x = (sint16)r_u16(rectangle);
+    packet.p[0].y = (sint16)r_u16(rectangle + 2u);
     packet.w = (sint16)r_u16(rectangle + 4u);
     packet.h = (sint16)r_u16(rectangle + 6u);
     DrawPrim(&packet);

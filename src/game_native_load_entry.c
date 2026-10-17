@@ -29,7 +29,7 @@ MATRIX *v8_native_16DA8(MATRIX *matrix);
 void v8_native_1D404(uint32 light, uint32 vector, uint32 color);
 uint32 sub_80044C44(uint32 destination, uint32 source, uint32 bytes);
 uint32 sub_8001BDDC(uint32 object, uint32 incoming_v0);
-void sub_8003E2C4(uint32 object);
+uint32 sub_8003E2C4(uint32 object, uint32 incoming_v0);
 void sub_800204DC(uint32 object);
 uint32 sub_8001DC1C(uint32 object);
 uint32 sub_8001B49C(uint32 object, uint32 kind, uint32 incoming_s1);
@@ -42,7 +42,7 @@ uint32 sub_8001AC44(uint32 asset, uint32 kind, uint32 bytes, uint32 flags);
 uint32 sub_8001D4F0(uint32 parent, uint32 child);
 void sub_80044484(uint32 voice, uint32 table, uint32 sample, uint32 volume);
 uint32 sub_800447E8(uint32 voice, uint32 table, uint32 sample, uint32 position);
-void sub_800441C8(uint32 voice);
+uint32 sub_800441C8(uint32 voice, uint32 incoming_v0);
 uint32 sub_8001BDA0(uint32 asset, uint32 index, uint32 incoming_s1);
 void sub_8003E598(uint32 object, uint32 model);
 uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint32 value);
@@ -62,7 +62,7 @@ uint32 sub_80023D00(void);
 uint32 sub_8001D9C0(uint32 source, uint32 projection);
 uint32 sub_8001D624(uint32 object);
 uint32 sub_80020890(uint32 object, uint32 delay);
-void sub_80044574(uint32 channel, uint32 volume);
+uint32 sub_80044574(uint32 channel, uint32 volume, uint32 incoming_v0);
 uint32 sub_8002E2BC(uint32 object, uint32 reason, uint32 update);
 void v8_native_4352C(uint32 matrix, const sint32 *source, sint32 *destination);
 typedef void (*V8LoadColorCallback)(uint32 base, uint32 color, uint32 primitive, uint32 vertex, uint32 normal);
@@ -537,7 +537,7 @@ static void load_release_object(uint32 object)
     if (model != 0u)
         (void)sub_8001BDDC(model, 0u);
     if ((r_u32(object) & 8u) != 0u)
-        sub_8003E2C4(r_u32(object + 112u));
+        (void)sub_8003E2C4(r_u32(object + 112u), 0u);
     sub_800204DC(object);
 }
 
@@ -2392,7 +2392,7 @@ void sub_80020540(uint32 object, uint32 incoming_v0)
     FUNCTION_MARKER(0x80020540u, "SLUS_005.10");
     resource = r_u32(object + 104u);
     if (resource != 0u) (void)sub_8001BDDC(resource, incoming_v0);
-    if ((r_u32(object) & 8u) != 0u) sub_8003E2C4(r_u32(object + 112u));
+    if ((r_u32(object) & 8u) != 0u) (void)sub_8003E2C4(r_u32(object + 112u), 0u);
     sub_800204DC(object);
 }
 
@@ -3238,7 +3238,7 @@ uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint
             if (value == 0u)
                 return 0u;
             result = sub_800449BC(object + 36u);
-            sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), result);
+            sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), result, result);
             return 0u;
         }
         if (target == 0x1908u || target == 0x191Cu) {
@@ -3456,6 +3456,7 @@ uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint
         if (target == ski_module + 0x9D0u)
         {
             uint32 countdown = r_u16(object + 162u), phase, sled, table, i, changed = value;
+            uint32 second_volume;
             if (countdown != 0u) {
                 countdown = (countdown - 1u) & 0xFFFFu;
                 w_u16(object + 162u, countdown);
@@ -3481,7 +3482,7 @@ uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint
                     w_u32(r_u32(object + 152u + 4u * i) + 48u, result);
                 }
                 w_u16(object + 162u, 1200u);
-                sub_800441C8((uint32)(sint32)(sint8)r_u8(object + 5u));
+                sub_800441C8((uint32)(sint32)(sint8)r_u8(object + 5u), 1200u);
                 w_u8(object + 5u, 0u);
                 changed = 1u;
             }
@@ -3489,8 +3490,9 @@ uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint
                 load_ski_place(r_u32(object + 152u), (uint32)(sint32)(sint16)r_u16(object + 160u));
                 load_ski_place(r_u32(object + 156u), (uint32)(sint32)(sint16)(r_u16(object + 160u) + 0x8000u));
                 result = sub_800446DC(r_u32(object + 152u) + 72u);
-                result += sub_800446DC(r_u32(object + 156u) + 72u);
-                sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), result);
+                second_volume = sub_800446DC(r_u32(object + 156u) + 72u);
+                result += second_volume;
+                sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), result, second_volume);
             }
             return 0u;
         }

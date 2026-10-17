@@ -105,63 +105,62 @@ uint32 sub_80016678(uint32 mode)
 
 uint32 sub_80016024(uint32 mode)
 {
-    uint32 state, x, y, buffer, cursor, value, edge_x, edge_y, page, index;
-    DISPENV display;
-    DRAWENV draw;
-    uint32 primitive_words[10];
-    uint8 *primitive = (uint8 *)primitive_words;
+    uint32 frame_address, state, x, y, buffer, cursor, value, edge_x, edge_y, page, index;
+    uint8 *frame;
     FUNCTION_MARKER(0x80016024u, "SLUS_005.10");
-    SetDefDispEnv(&display, 640, 0, 320, 240);
+    frame_address = xport_guest_frame_acquire(216u);
+    frame = (uint8 *)psx_addr(frame_address, 216u);
+    SetDefDispEnv((DISPENV *)(frame + 24u), 640, 0, 320, 240);
     x = (uint32)(sint32)(sint8)r_u8(0x8006531Cu);
     y = (uint32)(sint32)(sint8)r_u8(0x8006531Du);
-    xport_store_le16((uint8 *)&display + 8u, (uint16)x);
-    xport_store_le16((uint8 *)&display + 10u, (uint16)y);
+    xport_store_le16(frame + 32u, (uint16)x);
+    xport_store_le16(frame + 34u, (uint16)y);
     if (mode != 0u)
     {
-        SetDefDrawEnv(&draw, 640, 0, 320, 240);
-        xport_store_u8((uint8 *)&draw + 24u, 1u);
-        (void)PutDrawEnv(&draw);
-        xport_store_u8(primitive + 3u, 9u);
-        xport_store_u8(primitive + 7u, 0x2Du);
+        SetDefDrawEnv((DRAWENV *)(frame + 88u), 640, 0, 320, 240);
+        xport_store_u8(frame + 112u, 1u);
+        (void)PutDrawEnvPSX(frame_address + 88u, 0x80065026u, 0x800112F4u, 0x80065304u, 0x8004FBE4u, sub_80044C44);
+        xport_store_u8(frame + 51u, 9u);
+        xport_store_u8(frame + 55u, 0x2Du);
         for (x = 0u; x < 320u; x += 64u)
         {
             page = (x >> 5u) & 15u;
-            xport_store_le16(primitive + 22u, (uint16)(page | 0x100u));
-            xport_store_u8(primitive + 12u, 0u);
-            xport_store_u8(primitive + 13u, 0u);
-            xport_store_u8(primitive + 20u, 128u);
-            xport_store_u8(primitive + 21u, 0u);
-            xport_store_u8(primitive + 28u, 0u);
-            xport_store_u8(primitive + 29u, 255u);
-            xport_store_u8(primitive + 36u, 128u);
-            xport_store_u8(primitive + 37u, 255u);
-            xport_store_le16(primitive + 8u, (uint16)x);
-            xport_store_le16(primitive + 10u, 0u);
-            xport_store_le16(primitive + 16u, (uint16)(x + 64u));
-            xport_store_le16(primitive + 18u, 0u);
-            xport_store_le16(primitive + 24u, (uint16)x);
-            xport_store_le16(primitive + 26u, 128u);
-            xport_store_le16(primitive + 32u, (uint16)(x + 64u));
-            xport_store_le16(primitive + 34u, 128u);
-            (void)DrawPrim(primitive + 0u);
-            xport_store_u8(primitive + 29u, 224u);
-            xport_store_u8(primitive + 37u, 224u);
-            xport_store_le16(primitive + 22u, (uint16)(page | 0x110u));
-            xport_store_u8(primitive + 12u, 0u);
-            xport_store_u8(primitive + 13u, 0u);
-            xport_store_u8(primitive + 20u, 128u);
-            xport_store_u8(primitive + 21u, 0u);
-            xport_store_u8(primitive + 28u, 0u);
-            xport_store_u8(primitive + 36u, 128u);
-            xport_store_le16(primitive + 8u, (uint16)x);
-            xport_store_le16(primitive + 10u, 128u);
-            xport_store_le16(primitive + 16u, (uint16)(x + 64u));
-            xport_store_le16(primitive + 18u, 128u);
-            xport_store_le16(primitive + 24u, (uint16)x);
-            xport_store_le16(primitive + 26u, 240u);
-            xport_store_le16(primitive + 32u, (uint16)(x + 64u));
-            xport_store_le16(primitive + 34u, 240u);
-            (void)DrawPrim(primitive + 0u);
+            xport_store_le16(frame + 70u, (uint16)(page | 0x100u));
+            xport_store_u8(frame + 60u, 0u);
+            xport_store_u8(frame + 61u, 0u);
+            xport_store_u8(frame + 68u, 128u);
+            xport_store_u8(frame + 69u, 0u);
+            xport_store_u8(frame + 76u, 0u);
+            xport_store_u8(frame + 77u, 255u);
+            xport_store_u8(frame + 84u, 128u);
+            xport_store_u8(frame + 85u, 255u);
+            xport_store_le16(frame + 56u, (uint16)x);
+            xport_store_le16(frame + 58u, 0u);
+            xport_store_le16(frame + 64u, (uint16)(x + 64u));
+            xport_store_le16(frame + 66u, 0u);
+            xport_store_le16(frame + 72u, (uint16)x);
+            xport_store_le16(frame + 74u, 128u);
+            xport_store_le16(frame + 80u, (uint16)(x + 64u));
+            xport_store_le16(frame + 82u, 128u);
+            (void)DrawPrimPSX(frame_address + 48u, 0x8006501Cu, 0x80065304u, 0x8004FB18u);
+            xport_store_u8(frame + 77u, 224u);
+            xport_store_u8(frame + 85u, 224u);
+            xport_store_le16(frame + 70u, (uint16)(page | 0x110u));
+            xport_store_u8(frame + 60u, 0u);
+            xport_store_u8(frame + 61u, 0u);
+            xport_store_u8(frame + 68u, 128u);
+            xport_store_u8(frame + 69u, 0u);
+            xport_store_u8(frame + 76u, 0u);
+            xport_store_u8(frame + 84u, 128u);
+            xport_store_le16(frame + 56u, (uint16)x);
+            xport_store_le16(frame + 58u, 128u);
+            xport_store_le16(frame + 64u, (uint16)(x + 64u));
+            xport_store_le16(frame + 66u, 128u);
+            xport_store_le16(frame + 72u, (uint16)x);
+            xport_store_le16(frame + 74u, 240u);
+            xport_store_le16(frame + 80u, (uint16)(x + 64u));
+            xport_store_le16(frame + 82u, 240u);
+            (void)DrawPrimPSX(frame_address + 48u, 0x8006501Cu, 0x80065304u, 0x8004FB18u);
         }
     }
     else MoveImage((PSX_RECT *)psx_addr(0x80065660u, 8u), 640, 0);
@@ -202,9 +201,10 @@ uint32 sub_80016024(uint32 mode)
             }
     sub_8004D524(160u, 120u);
     sub_8004D544(256u);
-    (void)PutDispEnv(&display);
+    (void)PutDispEnvPSX(frame_address + 24u, 0x80065026u, 0x80065020u, 0x80011328u, 0x8006501Cu, 0x80065090u, 0x80065027u, 0x80065120u, 0x800650F8u, 0x80065304u, 0x8004FDB0u, sub_8004F1E8, sub_80044C44);
     index = r_u32(0x80065308u);
-    (void)PutDrawEnv((DRAWENV *)psx_addr(0x8006F208u + index * 92u, 92u));
+    (void)PutDrawEnvPSX(0x8006F208u + index * 92u, 0x80065026u, 0x800112F4u, 0x80065304u, 0x8004FBE4u, sub_80044C44);
+    xport_guest_frame_release(frame_address, 216u);
     return state;
 }
 
@@ -234,9 +234,9 @@ uint32 sub_80016364(void)
     brightness = 128u - value;
     if ((sint32)brightness <= 0) brightness = 0u;
     index = r_u32(0x80065308u);
-    (void)PutDrawEnv((DRAWENV *)psx_addr(0x8006F208u + index * 92u, 92u));
+    (void)PutDrawEnvPSX(0x8006F208u + index * 92u, 0x80065026u, 0x800112F4u, 0x80065304u, 0x8004FBE4u, sub_80044C44);
     index = r_u32(0x80065308u);
-    (void)PutDispEnv((DISPENV *)psx_addr(0x8006F5A0u + index * 20u, sizeof(DISPENV)));
+    (void)PutDispEnvPSX(0x8006F5A0u + index * 20u, 0x80065026u, 0x80065020u, 0x80011328u, 0x8006501Cu, 0x80065090u, 0x80065027u, 0x80065120u, 0x800650F8u, 0x80065304u, 0x8004FDB0u, sub_8004F1E8, sub_80044C44);
     (void)RotMatrixYXZ((SVECTOR *)(frame + 16u), (MATRIX *)(frame + 32u));
     SetRotMatrix((MATRIX *)(frame + 32u));
     state = r_u32(0x800659C0u);
@@ -319,7 +319,7 @@ uint32 sub_80043C34(uint32 command, uint32 response)
     if (flags != 0u)
     {
     (void)CdControl(9u, 0, 0);
-    result = CdSyncCallbackPSX(0u);
+    result = CdReadyCallbackPSX(0u);
     goto frame_return;
     }
     result = (uint32)CdControl(3u, (uint8 *)psx_addr(0x80065BE0u, 4u), 0);
@@ -409,7 +409,8 @@ uint32 sub_80016A20(uint32 vector)
     uint64 pair; uint32 low, high, leading, scale, shift, shifted, normalized;
     pair = sub_800171D4(vector, vector);
     low = (uint32)pair; high = (uint32)(pair >> 32);
-    leading = v8_native_count_sign_bits(high);
+    xport_gte_write_data(30u, high);
+    leading = xport_gte_read_data(31u);
     scale = (uint32)((sint32)(35u - leading) >> 1);
     shift = scale << 1; shifted = shift << 26;
     if ((sint32)shifted < 0)
@@ -421,7 +422,7 @@ uint32 sub_80016A20(uint32 vector)
     normalized = low >> (shift & 31u);
     if (shifted != 0u) normalized |= high << ((0u - shift) & 31u);
     }
-    low = SquareRoot0((sint32)normalized);
+    low = SquareRoot0PSX(normalized, 0x80060494u);
     return low << (scale & 31u);
 }
 
@@ -612,7 +613,7 @@ uint32 sub_8001FCB4(uint32 object, uint32 time)
 uint32 sub_8001F9CC(uint32 object, uint32 time)
 {
     uint32 record, flags, stream, auxiliary = 0u, modified = 0u, target, value, other, third, word, offset, address;
-    uint32 callback_result;
+    uint32 callback_registers[32]; uint32 callback_result;
     FUNCTION_MARKER(0x8001F9CCu, "SLUS_005.10");
     record = r_u32(object + 96u);
     if (record == 0u) return 0u;
@@ -635,7 +636,10 @@ uint32 sub_8001F9CC(uint32 object, uint32 time)
     w_u32(object + 96u, record);
     if (target != 0u)
     {
-    callback_result = v8_native_object_callback3(target, object, 5u, 0u);
+    callback_registers[0] = 0u; callback_registers[2] = value; callback_registers[3] = record;
+    callback_registers[4] = object; callback_registers[5] = 5u; callback_registers[6] = 0u; callback_registers[7] = target;
+    callback_registers[17] = stream; callback_registers[18] = object; callback_registers[19] = flags; callback_registers[20] = modified; callback_registers[21] = auxiliary; callback_registers[22] = time; callback_registers[28] = 0x80065304u; callback_registers[31] = 0x8001FA74u;
+    callback_result = xport_guest_call_known_registers(target, callback_registers, 0x907E00FDu);
     value = callback_result;
     }
     else

@@ -17,11 +17,11 @@ uint32 sub_8004445C(uint32 voice, uint32 table, uint32 sample);
 uint32 sub_800447E8(uint32 voice, uint32 table, uint32 sample, uint32 position);
 uint32 sub_8001D708(uint32 object);
 uint32 sub_800446DC(uint32 position);
-void sub_80044574(uint32 voice, uint32 volume);
+uint32 sub_80044574(uint32 voice, uint32 volume, uint32 incoming_v0);
 uint32 v8_native_terrain_call3(uint32 callback, uint32 object, uint32 mode, uint32 value);
 void v8_native_4352C(uint32 matrix, const sint32 *source, sint32 *destination);
 uint32 v8_native_17594(uint32 object, const sint32 *impulse, uint32 point);
-void sub_800441C8(uint32 voice);
+uint32 sub_800441C8(uint32 voice, uint32 incoming_v0);
 uint32 sub_800443C8(uint32 voice, uint32 table, uint32 sample, uint32 volume, uint32 incoming_v0);
 
 static sint32 control_product(sint32 first, sint32 second)
@@ -65,7 +65,8 @@ void sub_8002D054(uint32 object)
     int special = (flags & 0x08000000u) != 0u;
     FUNCTION_MARKER(0x8002D054u, "SLUS_005.10");
     if (special) {
-        sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), sub_800446DC(object + 36u));
+        volume = sub_800446DC(object + 36u);
+        sub_80044574((uint32)(sint32)(sint8)r_u8(object + 5u), volume, volume);
     } else {
         if ((flags & 0x100000u) != 0u) {
             direction = (sint8)r_u8(object + 178u);
@@ -262,7 +263,7 @@ void v8_native_2C59C(uint32 object, uint32 controls)
     uint32 counter, voice, value, table;
     FUNCTION_MARKER(0x8002C59Cu, "SLUS_005.10");
     if ((controls & 0xFFFFu) == 0u) {
-        sub_800441C8((uint32)(sint32)(sint8)r_u8(object + 5u));
+        sub_800441C8((uint32)(sint32)(sint8)r_u8(object + 5u), 0u);
         return;
     }
     counter = (r_u16(object + 176u) - 1u) & 0xFFFFu;

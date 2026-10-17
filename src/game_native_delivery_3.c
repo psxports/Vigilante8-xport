@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+uint32 sub_8004366C(uint32 matrix);
+void xport_mips_overflow_exception(uint32 pc);
 
 uint32 sub_8002E630(uint32 asset, uint32 index, uint32 table);
 uint32 sub_8003E2FC(uint32 object);
@@ -30,12 +32,12 @@ uint32 sub_80017E3C(uint32 parent, uint32 type, uint32 x, uint32 y, uint32 width
 uint32 sub_80017EC4(uint32 node, uint32 split);
 uint32 sub_80017F4C(uint32 node, uint32 split);
 uint32 sub_80043754(uint32 matrix, uint32 scale, uint32 output);
-void sub_8001D490(uint32 object);
+uint32 sub_8001D490(uint32 object);
 uint32 sub_8001B1F8(uint32 object);
 uint32 sub_800435C0(uint32 matrix, uint32 input, uint32 output);
 uint32 sub_8004352C(uint32 matrix, uint32 input, uint32 output);
-void sub_8003E2C4(uint32 object);
-void sub_8001AA0C(uint32 object);
+uint32 sub_8003E2C4(uint32 object, uint32 incoming_v0);
+uint32 sub_8001AA0C(uint32 object);
 uint32 sub_8001B038(uint32 object, uint32 kind);
 uint32 sub_800255F4(uint32 x, uint32 z);
 void sub_80044550(uint32 voice, uint32 table, uint32 index, uint32 volume);
@@ -134,30 +136,47 @@ void v8_native_stream_read_host(void *destination, uint32 bytes)
 
 uint32 sub_80022524(uint32 *header, uint32 *remaining)
 {
-    uint32 length, result;
+    uint32 header_address, remaining_address, value, length, result, bytes, tag;
     FUNCTION_MARKER(0x80022524u, "SLUS_005.10");
-    v8_native_stream_read_host(header, 8u);
-    length = native3_swap32(header[1]);
-    header[1] = length;
-    result = (length + 1u) & ~1u;
-    *remaining = *remaining - 8u - result;
-    if (header[0] == 0x4D524F46u)
+    header_address = xport_guest_buffer_address(header, 8u);
+    remaining_address = xport_guest_buffer_address(remaining, 4u);
+    if (header_address == 0u || remaining_address == 0u)
     {
-        v8_native_stream_read_host(header, 4u);
-        header[1] -= 4u;
+        fprintf(stderr, "sub_80022524 requires guest-backed ABI buffers\n");
+        abort();
+    }
+    (void)sub_80015A20(header_address, 8u);
+    value = r_u32(header_address + 4u);
+    length = (value >> 24) | ((value >> 8) & 0xFF00u) | ((value & 0xFF00u) << 8) | (value << 24);
+    w_u32(header_address + 4u, length);
+    bytes = r_u32(remaining_address);
+    result = (length + 1u) & 0xFFFFFFFEu;
+    w_u32(remaining_address, bytes - 8u - result);
+    tag = r_u32(header_address);
+    if (tag == 0x4D524F46u)
+    {
+        (void)sub_80015A20(header_address, 4u);
+        length = r_u32(header_address + 4u);
         result = 0xFFFFFFFFu;
+        w_u32(header_address + 4u, length - 4u);
     }
     return result;
 }
 
 uint32 sub_8002263C(uint32 bytes, uint32 prepare)
 {
-    uint32 asset = 0u, animation = 0u, sound = 0u, header[2], size, tag, object;
+    uint32 sub_80015BE4(void);
+    uint32 sub_80015BF0(uint32 position, uint32 origin);
+    uint32 asset = 0u, animation = 0u, sound = 0u, size, tag, object;
+    uint32 frame;
     FUNCTION_MARKER(0x8002263Cu, "SLUS_005.10");
+    frame = xport_guest_frame_acquire(56u);
+    w_u32(frame + 56u, bytes);
     while (bytes != 0u)
     {
-        size = sub_80022524(header, &bytes);
-        tag = native3_swap32(header[0]);
+        size = sub_80022524((uint32 *)psx_addr(frame + 16u, 8u),
+            (uint32 *)psx_addr(frame + 56u, 4u));
+        tag = native3_swap32(r_u32(frame + 16u));
         if (tag == 0x42494E20u)
         {
             asset = sub_800116F4(size);
@@ -170,31 +189,51 @@ uint32 sub_8002263C(uint32 bytes, uint32 prepare)
         }
         else if (tag == 0x534E4420u)
         {
-            size += r_u32(0x800659B0u);
+            size += sub_80015BE4();
             sound = sub_800441F8();
-            v8_native_15BF0(size, 0u);
+            sub_80015BF0(size, 0u);
         }
+        bytes = r_u32(frame + 56u);
     }
     object = sub_8001A640(asset, animation);
     if (prepare != 0u)
         sub_8001A91C(object);
     if (sound != 0u)
         w_u32(object + 8u, sound);
+    xport_guest_frame_release(frame, 56u);
     return object;
 }
 
 uint32 sub_80021B80(uint32 callback, uint32 asset, uint32 kind, uint32 flags)
 {
-    uint32 size = 128u, result, arguments[32] = {0u};
+    uint32 size = 128u, result, registers[32] = {0u};
     FUNCTION_MARKER(0x80021B80u, "SLUS_005.10");
     if (callback != 0u)
     {
-        arguments[4] = asset; arguments[5] = 7u; arguments[6] = kind & 0xFFFFu; arguments[7] = flags;
-        result = xport_guest_call4_with_registers(callback, arguments);
+        registers[4] = asset;
+        registers[5] = 7u;
+        registers[6] = kind & 0xFFFFu;
+        registers[7] = flags;
+        registers[16] = callback;
+        registers[17] = asset;
+        registers[18] = kind;
+        registers[19] = flags;
+        registers[28] = 0x80065304u;
+        registers[31] = 0x80021BBCu;
+        result = xport_guest_call_known_registers(callback, registers, 0x900F00F1u);
         if (result != 0u)
             return result;
-        arguments[4] = 0u; arguments[5] = 6u; arguments[6] = 0u;
-        size = xport_guest_call4_with_registers(callback, arguments);
+        registers[2] = 0u;
+        registers[4] = 0u;
+        registers[5] = 6u;
+        registers[6] = 0u;
+        registers[16] = callback;
+        registers[17] = asset;
+        registers[18] = kind;
+        registers[19] = flags;
+        registers[28] = 0x80065304u;
+        registers[31] = 0x80021BD0u;
+        size = xport_guest_call_known_registers(callback, registers, 0x900F0075u);
         if (size == 0u)
             size = 128u;
     }
@@ -203,50 +242,59 @@ uint32 sub_80021B80(uint32 callback, uint32 asset, uint32 kind, uint32 flags)
     return sub_8001D470(size);
 }
 
-void sub_8001AA0C(uint32 object)
+uint32 sub_8001AA0C(uint32 object)
 {
+    uint32 result;
     FUNCTION_MARKER(0x8001AA0Cu, "SLUS_005.10");
-    sub_8001A994(object);
+    result = sub_8001A994(object);
     sub_80045088(object);
+    return result;
 }
 
-void sub_8003E2C4(uint32 object)
+uint32 sub_8003E2C4(uint32 object, uint32 incoming_v0)
 {
+    uint32 result = incoming_v0, child;
     FUNCTION_MARKER(0x8003E2C4u, "SLUS_005.10");
     if (object != 0u)
     {
-        sub_8001BDDC(r_u32(object), 0u);
+        child = r_u32(object);
+        result = sub_8001BDDC(child, result);
         sub_80045088(object);
     }
+    return result;
 }
 
-void sub_8001D490(uint32 object)
+uint32 sub_8001D490(uint32 object)
 {
-    uint32 child;
+    uint32 child, result;
     FUNCTION_MARKER(0x8001D490u, "SLUS_005.10");
     child = r_u32(object + 104u);
     if (child != 0u)
-        sub_8001BDDC(child, 0u);
-    if ((r_u32(object) & 8u) != 0u)
-        sub_8003E2C4(r_u32(object + 112u));
-    sub_8001AF48(object, 0u);
+        (void)sub_8001BDDC(child, 0u);
+    result = r_u32(object) & 8u;
+    if (result != 0u)
+        result = sub_8003E2C4(r_u32(object + 112u), result);
+    return sub_8001AF48(object, result);
 }
 
 uint32 sub_8001B038(uint32 object, uint32 kind)
 {
-    uint32 table, index;
+    uint32 container, table, index;
     FUNCTION_MARKER(0x8001B038u, "SLUS_005.10");
-    table = r_u32(r_u32(object + 88u));
+    container = r_u32(object + 88u);
     index = r_u16(object + 10u);
+    table = r_u32(container);
     return sub_8001AFA0(table, r_u16(table + 28u * index + 54u), kind & 0xFFFFu);
 }
 
 uint32 sub_8001B1F8(uint32 object)
 {
-    uint32 table, index, node;
+    uint32 container, table, index, node;
     FUNCTION_MARKER(0x8001B1F8u, "SLUS_005.10");
-    table = r_u32(r_u32(object + 88u));
-    index = r_u16(table + 28u * r_u16(object + 10u) + 54u);
+    container = r_u32(object + 88u);
+    index = r_u16(object + 10u);
+    table = r_u32(container);
+    index = r_u16(table + 28u * index + 54u);
     while (index != 0xFFFFu)
     {
         node = table + 28u * index + 28u;
@@ -330,19 +378,25 @@ static uint32 native3_height_sample(uint32 x, uint32 z)
 uint32 sub_80025400(uint32 x, uint32 z)
 {
     uint32 xi = x >> 16, zi = z >> 16, xf = x & 65535u, zf = z & 65535u;
-    uint32 height, hx, hz, accumulator;
+    uint32 height, hx, hz, accumulator, first, second, third;
     FUNCTION_MARKER(0x80025400u, "SLUS_005.10");
     if (xf + zf <= 65535u)
     {
-        height = native3_height_sample(xi, zi);
-        hx = native3_height_sample(xi + 1u, zi);
-        hz = native3_height_sample(xi, zi + 1u);
+        first = r_u32(0x800911A0u + ((zi >> 6) << 2) + ((xi >> 6) << 7));
+        second = r_u32(0x800911A0u + ((zi >> 6) << 2) + (((xi + 1u) >> 6) << 7));
+        height = r_u16(first + ((zi & 63u) << 1) + ((xi & 63u) << 7)) & 2047u;
+        hx = r_u16(second + ((zi & 63u) << 1) + (((xi + 1u) & 63u) << 7)) & 2047u;
+        third = r_u32(0x800911A0u + (((zi + 1u) >> 6) << 2) + ((xi >> 6) << 7));
+        hz = r_u16(third + (((zi + 1u) & 63u) << 1) + ((xi & 63u) << 7)) & 2047u;
     }
     else
     {
-        height = native3_height_sample(xi + 1u, zi + 1u);
-        hx = native3_height_sample(xi, zi + 1u);
-        hz = native3_height_sample(xi + 1u, zi);
+        first = r_u32(0x800911A0u + (((zi + 1u) >> 6) << 2) + (((xi + 1u) >> 6) << 7));
+        second = r_u32(0x800911A0u + (((zi + 1u) >> 6) << 2) + ((xi >> 6) << 7));
+        height = r_u16(first + (((zi + 1u) & 63u) << 1) + (((xi + 1u) & 63u) << 7)) & 2047u;
+        hx = r_u16(second + (((zi + 1u) & 63u) << 1) + ((xi & 63u) << 7)) & 2047u;
+        third = r_u32(0x800911A0u + ((zi >> 6) << 2) + (((xi + 1u) >> 6) << 7));
+        hz = r_u16(third + ((zi & 63u) << 1) + (((xi + 1u) & 63u) << 7)) & 2047u;
         xf = 65536u - xf;
         zf = 65536u - zf;
     }
@@ -435,42 +489,102 @@ static uint32 native3_transform_long(uint32 matrix, uint32 input, uint32 output,
 
 uint32 sub_8004352C(uint32 matrix, uint32 input, uint32 output)
 {
+    uint32 values[3], high[3], low[3], i;
     FUNCTION_MARKER(0x8004352Cu, "SLUS_005.10");
-    return native3_transform_long(matrix, input, output, 0u, NULL, NULL);
+    sub_8004366C(matrix);
+    for (i = 0u; i < 3u; ++i)
+        values[i] = r_u32(input + 4u * i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, (uint32)((sint32)values[i] >> 15));
+    xport_gte_execute(0x0041E012u);
+    for (i = 0u; i < 3u; ++i)
+        high[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, values[i] & 0x7FFFu);
+    xport_gte_execute(0x0049E012u);
+    for (i = 0u; i < 3u; ++i)
+        low[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        w_u32(output + 4u * i, low[i] + (high[i] << 3));
+    return output;
 }
 
 uint32 sub_800435C0(uint32 matrix, uint32 input, uint32 output)
 {
+    uint32 values[3], translation[3], high[3], low[3], i, difference;
     FUNCTION_MARKER(0x800435C0u, "SLUS_005.10");
-    return native3_transform_long(matrix, input, output, 1u, NULL, NULL);
+    sub_8004366C(matrix);
+    for (i = 0u; i < 3u; ++i)
+        values[i] = r_u32(input + 4u * i);
+    for (i = 0u; i < 3u; ++i)
+        translation[i] = r_u32(matrix + 20u + 4u * i);
+    for (i = 0u; i < 3u; ++i)
+    {
+        difference = values[i] - translation[i];
+        if (((values[i] ^ translation[i]) & (values[i] ^ difference) & 0x80000000u) != 0u)
+            xport_mips_overflow_exception(0x800435E4u + 4u * i);
+        values[i] = difference;
+    }
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, (uint32)((sint32)values[i] >> 15));
+    xport_gte_execute(0x0041E012u);
+    for (i = 0u; i < 3u; ++i)
+        high[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        xport_gte_write_data(9u + i, values[i] & 0x7FFFu);
+    xport_gte_execute(0x0049E012u);
+    for (i = 0u; i < 3u; ++i)
+        low[i] = xport_gte_read_data(25u + i);
+    for (i = 0u; i < 3u; ++i)
+        w_u32(output + 4u * i, low[i] + (high[i] << 3u));
+    return output;
 }
 
 uint32 sub_800173FC(uint32 object, uint32 delta, uint32 spin)
 {
-    uint32 value, previous, product, i;
-    sint32 angles[3];
+    uint32 value, added, previous, product, scale, next_scale, z_rotation;
+    uint32 x_velocity, y_velocity, z_velocity;
+    sint32 angle_x, angle_y, angle_z;
     FUNCTION_MARKER(0x800173FCu, "SLUS_005.10");
-    value = r_u32(object + 128u) + r_u32(delta);
-    w_u32(object + 128u, value);
+    value = r_u32(object + 128u);
+    added = r_u32(delta);
+    w_u32(object + 128u, value + added);
     value = r_u32(object + 132u);
+    added = r_u32(delta + 4u);
     previous = r_u32(object + 136u);
-    value += r_u32(delta + 4u);
-    w_u32(object + 132u, value);
-    w_u32(object + 136u, previous + r_u32(delta + 8u));
-    for (i = 0u; i < 3u; ++i)
-    {
-        product = r_u32(spin + 4u * i) * (uint32)(sint32)((sint16)r_u16(object + 156u + 2u * i));
-        value = r_u32(object + 144u + 4u * i) + (uint32)((sint32)product / 64);
-        w_u32(object + 144u + 4u * i, value);
-    }
-    for (i = 0u; i < 3u; ++i)
-        angles[i] = (sint32)r_u32(object + 144u + 4u * i) / 128;
-    sub_800439B8(object + 16u, angles[0], angles[1], angles[2]);
-    for (i = 0u; i < 3u; ++i)
-    {
-        value = r_u32(object + 36u + 4u * i) + (uint32)((sint32)r_u32(object + 128u + 4u * i) / 128);
-        w_u32(object + 36u + 4u * i, value);
-    }
+    w_u32(object + 132u, value + added);
+    added = r_u32(delta + 8u);
+    w_u32(object + 136u, previous + added);
+    scale = (uint32)(sint32)(sint16)r_u16(object + 156u);
+    added = r_u32(spin);
+    product = added * scale;
+    value = r_u32(object + 144u);
+    next_scale = (uint32)(sint32)(sint16)r_u16(object + 158u);
+    w_u32(object + 144u, value + (uint32)((sint32)product / 64));
+    added = r_u32(spin + 4u);
+    product = added * next_scale;
+    value = r_u32(object + 148u);
+    next_scale = (uint32)(sint32)(sint16)r_u16(object + 160u);
+    w_u32(object + 148u, value + (uint32)((sint32)product / 64));
+    added = r_u32(spin + 8u);
+    product = added * next_scale;
+    value = r_u32(object + 152u);
+    previous = r_u32(object + 144u);
+    z_rotation = value + (uint32)((sint32)product / 64);
+    w_u32(object + 152u, z_rotation);
+    angle_x = (sint32)previous / 128;
+    angle_y = (sint32)r_u32(object + 148u) / 128;
+    angle_z = (sint32)z_rotation / 128;
+    sub_800439B8(object + 16u, angle_x, angle_y, angle_z);
+    x_velocity = r_u32(object + 128u);
+    value = r_u32(object + 36u);
+    y_velocity = r_u32(object + 132u);
+    w_u32(object + 36u, value + (uint32)((sint32)x_velocity / 128));
+    value = r_u32(object + 40u);
+    z_velocity = r_u32(object + 136u);
+    w_u32(object + 40u, value + (uint32)((sint32)y_velocity / 128));
+    value = r_u32(object + 44u);
+    w_u32(object + 44u, value + (uint32)((sint32)z_velocity / 128));
     return sub_8004C934(object + 16u, object + 16u);
 }
 
@@ -504,15 +618,20 @@ static uint32 native3_compose_matrix_host(const uint32 *left, const uint32 *righ
 
 uint32 sub_8003E2FC(uint32 object)
 {
-    uint32 transform, height, result = 0u, overlay;
-    sint16 normal[3];
-    sint32 scale[3];
-    uint32 slope[5] = {0u}, scaled[5];
+    uint32 frame, transform, x, z, height, result = 0u, overlay, definition;
+    uint32 normal_x, normal_y, normal_z, slope_x, slope_z, scale_x, scale_z;
+    sint16 *normal;
     FUNCTION_MARKER(0x8003E2FCu, "SLUS_005.10");
+    frame = xport_guest_frame_acquire(128u);
+    normal = (sint16 *)psx_addr(frame + 16u, 6u);
+    x = r_u32(object + 36u);
+    z = r_u32(object + 44u);
     transform = r_u32(object + 112u);
-    height = sub_80025400(r_u32(object + 36u), r_u32(object + 44u));
-    w_u32(transform + 24u, r_u32(object + 36u));
-    w_u32(transform + 32u, r_u32(object + 44u));
+    height = sub_80025400(x, z);
+    x = r_u32(object + 36u);
+    w_u32(transform + 24u, x);
+    z = r_u32(object + 44u);
+    w_u32(transform + 32u, z);
     overlay = r_u32(object + 116u);
     if (overlay != 0u)
     {
@@ -531,10 +650,18 @@ uint32 sub_8003E2FC(uint32 object)
     else
     {
         w_u32(transform + 28u, height);
-        sub_80025800((sint32)r_u32(object + 36u), (sint32)r_u32(object + 44u), normal);
+        x = r_u32(object + 36u);
+        z = r_u32(object + 44u);
+        sub_80025800((sint32)x, (sint32)z, normal);
     }
-    if ((r_u16(r_u32(transform)) & 8u) != 0u)
+    definition = r_u32(transform);
+    if ((r_u16(definition) & 8u) != 0u)
     {
+        scale_x = r_u32(transform + 36u);
+        w_u32(frame + 24u, scale_x);
+        w_u32(frame + 28u, 0u);
+        scale_z = r_u32(transform + 40u);
+        w_u32(frame + 32u, scale_z);
         w_u16(transform + 4u, 4096u);
         w_u16(transform + 20u, 4096u);
         w_u16(transform + 18u, 0u);
@@ -542,32 +669,58 @@ uint32 sub_8003E2FC(uint32 object)
         w_u16(transform + 12u, 0u);
         w_u16(transform + 8u, 0u);
         w_u16(transform + 6u, 0u);
-        result = (uint32)(native3_div(-4096 * (sint32)normal[0], normal[1]));
-        w_u16(transform + 10u, (uint16)result);
-        result = (uint32)(native3_div(-4096 * (sint32)normal[2], normal[1]));
-        w_u16(transform + 14u, (uint16)result);
+        normal_x = (uint32)(sint32)(sint16)r_u16(frame + 16u);
+        normal_y = (uint32)(sint32)(sint16)r_u16(frame + 18u);
+        result = (uint32)native3_div((sint32)((0u - normal_x) << 12u), (sint32)normal_y);
+        w_u16(transform + 10u, result);
+        normal_z = (uint32)(sint32)(sint16)r_u16(frame + 20u);
+        normal_y = (uint32)(sint32)(sint16)r_u16(frame + 18u);
+        result = (uint32)native3_div((sint32)((0u - normal_z) << 12u), (sint32)normal_y);
+        w_u16(transform + 14u, result);
+        xport_guest_frame_release(frame, 128u);
         return result;
     }
-    slope[0] = 4096u;
-    slope[4] = 4096u;
-    result = normal[1] != 0 ? (uint32)(native3_div(-4096 * (sint32)normal[0], normal[1])) : (uint32)(-16 * (sint32)normal[0]);
-    slope[1] = (result & 0xFFFFu) << 16;
-    result = normal[1] != 0 ? (uint32)(native3_div(-4096 * (sint32)normal[2], normal[1])) : (uint32)(-16 * (sint32)normal[2]);
-    slope[2] = (result & 0xFFFFu) << 16;
-    scale[0] = (sint32)r_u32(transform + 36u);
-    if (((sint16)r_u16(object + 24u)) <= 0)
-        scale[0] = (sint32)(0u - (uint32)scale[0]);
-    scale[1] = 0;
-    scale[2] = (sint32)r_u32(transform + 40u);
-    native3_scale_matrix_host(object + 16u, scale, scaled);
-    return native3_compose_matrix_host(slope, scaled, transform + 4u);
+    normal_x = (uint32)(sint32)(sint16)r_u16(frame + 16u);
+    normal_y = (uint32)(sint32)(sint16)r_u16(frame + 18u);
+    w_u16(frame + 40u, 4096u);
+    w_u16(frame + 56u, 4096u);
+    w_u16(frame + 54u, 0u);
+    w_u16(frame + 52u, 0u);
+    w_u16(frame + 48u, 0u);
+    w_u16(frame + 44u, 0u);
+    w_u16(frame + 42u, 0u);
+    slope_x = normal_y != 0u
+        ? (uint32)native3_div((sint32)((0u - normal_x) << 12u), (sint32)normal_y)
+        : (0u - normal_x) << 4u;
+    normal_z = (uint32)(sint32)(sint16)r_u16(frame + 20u);
+    normal_y = (uint32)(sint32)(sint16)r_u16(frame + 18u);
+    w_u16(frame + 46u, slope_x);
+    slope_z = normal_y != 0u
+        ? (uint32)native3_div((sint32)((0u - normal_z) << 12u), (sint32)normal_y)
+        : (0u - normal_z) << 4u;
+    w_u16(frame + 50u, slope_z);
+    x = (uint32)(sint32)(sint16)r_u16(object + 24u);
+    scale_x = r_u32(transform + 36u);
+    if ((sint32)x <= 0)
+        scale_x = 0u - scale_x;
+    w_u32(frame + 24u, scale_x);
+    w_u32(frame + 28u, 0u);
+    scale_z = r_u32(transform + 40u);
+    w_u32(frame + 32u, scale_z);
+    sub_80043754(object + 16u, frame + 24u, frame + 72u);
+    (void)MulMatrix0((MATRIX *)psx_addr(frame + 40u, 20u),
+        (MATRIX *)psx_addr(frame + 72u, 20u), (MATRIX *)psx_addr(transform + 4u, 20u));
+    result = transform + 4u;
+    xport_guest_frame_release(frame, 128u);
+    return result;
 }
 
 uint32 sub_8002E630(uint32 asset, uint32 index, uint32 table)
 {
-    uint32 object, child, node, part, definition, source, j, kind, value, flags, slot;
+    uint32 object, child, node, part, definition, source, j, kind, value, flags, slot, frame, address, offset;
     sint32 denominator;
     FUNCTION_MARKER(0x8002E630u, "SLUS_005.10");
+    frame = xport_guest_frame_acquire(64u);
     index &= 0xFFFFu;
     object = sub_8001AC44(asset, index, 292u, r_u32(asset + 4u) != 0u ? 8u : 0u);
     flags = r_u32(object);
@@ -624,8 +777,23 @@ uint32 sub_8002E630(uint32 asset, uint32 index, uint32 table)
         value = denominator != 0 ? (uint32)(16777216 / denominator) : 0xFFFFFFFFu;
         w_u32(part + 148u, value);
         value = sub_80017160();
-        w_u32(part + 64u, value & 0xFFFFu);
-        w_u16(part + 68u, (uint16)((j & 1u) << 11));
+        w_u16(frame + 16u, value);
+        w_u16(frame + 18u, 0u);
+        w_u16(frame + 20u, (j & 1u) << 11);
+        address = frame + 16u + 3u;
+        offset = address & 3u;
+        value = r_u32(address & ~3u) << (8u * (3u - offset));
+        address = frame + 16u;
+        offset = address & 3u;
+        value = (value & (offset == 0u ? 0u : 0xFFFFFFFFu << (8u * (4u - offset)))) | (r_u32(address & ~3u) >> (8u * offset));
+        source = (uint32)r_s16(frame + 20u);
+        address = part + 64u + 3u;
+        offset = address & 3u;
+        w_masked_u32(address & ~3u, value >> (8u * (3u - offset)), (1u << (offset + 1u)) - 1u);
+        address = part + 64u;
+        offset = address & 3u;
+        w_masked_u32(address & ~3u, value << (8u * offset), (15u << offset) & 15u);
+        w_u16(part + 68u, source);
         value = r_u8(table + 12u);
         flags = r_u32(part);
         value = (((value >> j) & 1u) << 16) | (j << 19);
@@ -645,10 +813,20 @@ uint32 sub_8002E630(uint32 asset, uint32 index, uint32 table)
         sub_8001D708(child);
         sub_8001D4F0(object, child);
     }
-    value = r_u32(table + 20u);
-    source = (uint32)(sint32)((sint16)r_u16(table + 24u));
-    w_u32(object + 156u, value);
-    w_u16(object + 160u, (uint16)source);
+    address = table + 20u + 3u;
+    offset = address & 3u;
+    value = r_u32(address & ~3u) << (8u * (3u - offset));
+    address = table + 20u;
+    offset = address & 3u;
+    value = (value & (offset == 0u ? 0u : 0xFFFFFFFFu << (8u * (4u - offset)))) | (r_u32(address & ~3u) >> (8u * offset));
+    source = (uint32)r_s16(table + 24u);
+    address = object + 156u + 3u;
+    offset = address & 3u;
+    w_masked_u32(address & ~3u, value >> (8u * (3u - offset)), (1u << (offset + 1u)) - 1u);
+    address = object + 156u;
+    offset = address & 3u;
+    w_masked_u32(address & ~3u, value << (8u * offset), (15u << offset) & 15u);
+    w_u16(object + 160u, source);
     value = r_u16(table + 26u);
     w_u16(object + 162u, (uint16)value);
     sub_80044EFC(object + 144u, 0u, 12u);
@@ -669,6 +847,7 @@ uint32 sub_8002E630(uint32 asset, uint32 index, uint32 table)
     w_u8(object + 180u, (uint8)value);
     /* The last original S1 value is the allocated child used by primitive creation */
     w_u32(object + 124u, sub_8001B270(object, part));
+    xport_guest_frame_release(frame, 64u);
     return object;
 }
 
